@@ -110,7 +110,7 @@ export default function ReportsNotificationsPage() {
     const { data, error } = await supabase
       .from("generated_reports")
       .select("*")
-      .order("generated_at", { ascending: false });
+      .order("generated_at", { ascending: true });
 
     setIsLoading(false);
 
