@@ -1271,6 +1271,52 @@ sched._overallProgressPct = isNaN(finalOverall)
     window.manilaRecords = [];
     window.localRecords = [];
 };
+
+// Render Single Project -> Project Schedule
+window.renderProjectView = function(projectId) {
+    const id = String(projectId);
+
+    currentProjectId = id;
+    window.currentProjectId = id;
+
+    if (typeof window._setCurrentProjectId === 'function') {
+        window._setCurrentProjectId(id);
+    }
+
+    window.__projectScheduleLoadedProjectId = null;
+
+    currentView = 'project-schedule';
+
+    if (typeof updateSubNavVisibility === 'function') {
+        updateSubNavVisibility();
+    }
+
+    const project = (window.projects || projects || []).find(
+        p => String(p.id) === id
+    );
+
+    if (project) {
+        if (selectedProjectName) {
+            selectedProjectName.textContent = project.title || project.name || 'Selected Project';
+        }
+
+        if (breadcrumbProjectName) {
+            breadcrumbProjectName.textContent = project.title || project.name || 'Selected Project';
+        }
+    }
+
+    if (typeof window.__syncReactState === 'function') {
+        window.__syncReactState('project-schedule', id);
+        return;
+    }
+
+    if (typeof window.renderProjectScheduleView === 'function') {
+        window.renderProjectScheduleView();
+    } else {
+        console.error('renderProjectScheduleView is not defined.');
+    }
+};
+
         let currentCalendarDate = new Date();
         let selectedCalendarDate = new Date();
 
@@ -3245,56 +3291,49 @@ if (tdShowWbsSequence && window._mountWbsMapPreview) {
         window.renderWbsSequenceView = function() { console.warn('[Legacy] Attempted to call removed renderer: renderWbsSequenceView'); };
 
         // Render Single Project (Task List)
-        window.renderProjectView = function(projectId) {
-    currentProjectId = projectId;
-    window.currentProjectId = projectId;
+        // Render Single Project -> Project Schedule
+window.renderProjectView = function(projectId) {
+    const id = String(projectId);
 
-    window.__requestLoadedProjectId = null;
+    console.log('[VIEW CLICKED] Redirecting to Project Schedule:', id);
 
-    if (typeof window.loadProcurementModuleData === 'function') {
-        window.loadProcurementModuleData();
+    if (typeof window._setCurrentProjectId === 'function') {
+        window._setCurrentProjectId(id);
+    } else {
+        currentProjectId = id;
+        window.currentProjectId = id;
     }
 
-            const project = projects.find(p => p.id === projectId);
-            if (!project) return;
-            
-            currentView = 'project_detail';
-            currentProjectId = projectId;
-            updateSubNavVisibility();
-            
-            let html = `
-                <div class="view-header" style="display: flex; justify-content: space-between; align-items: center;">
-                    <h1>${project.title} - Tasks</h1>
-                    <button class="btn btn-primary" onclick="openModal()">+ New Task</button>
-                </div>
-                <div class="task-list">
-            `;
-            
-            if (project.tasks.length === 0) {
-                html += `<div style="padding: 24px; color: var(--text-muted);">No tasks yet.</div>`;
-            } else {
-                project.tasks.forEach(t => {
-                    const priorityClass = `priority-${t.priority.toLowerCase()}`;
-                    html += `
-                        <div class="task-item ${t.completed ? 'completed' : ''}">
-                            <input type="checkbox" class="task-checkbox" ${t.completed ? 'checked' : ''} onchange="toggleTask(${project.id}, ${t.id})">
-                            <div class="task-content">
-                                <div class="task-title">${t.title}</div>
-                                <div class="task-meta">
-                                    <span>Assignee: ${t.assignee}</span>
-                                    <span class="task-priority ${priorityClass}">
-                                        Priority: ${t.priority}
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                });
-            }
-            
-            html += `</div>`;
-            contentArea.innerHTML = html;
-        }
+    currentProjectId = id;
+    window.currentProjectId = id;
+    window.__projectScheduleLoadedProjectId = null;
+    currentView = 'project-schedule';
+
+    const project = (window.projects || projects || []).find(
+        p => String(p.id) === id
+    );
+
+    if (project) {
+        const projectName = project.title || project.name || 'Selected Project';
+
+        if (selectedProjectName) selectedProjectName.textContent = projectName;
+        if (breadcrumbProjectName) breadcrumbProjectName.textContent = projectName;
+    }
+
+    if (typeof updateSubNavVisibility === 'function') {
+        updateSubNavVisibility();
+    }
+
+    if (typeof window.__syncReactState === 'function') {
+        window.__syncReactState('project-schedule', id);
+    }
+
+    if (typeof window.renderProjectScheduleView === 'function') {
+        window.renderProjectScheduleView();
+    } else {
+        console.error('renderProjectScheduleView is not defined.');
+    }
+};
 
         // Toggle Task Completion
         window.toggleTask = function(projectId, taskId) {
@@ -5755,7 +5794,9 @@ window.boqBudgets = boqBudgets;
 
             const headerRange = new Date(week.startDate).toLocaleDateString() + ' - ' + new Date(week.endDate).toLocaleDateString();
             const reportDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-            const project = projects.find(p => p.id === currentProjectId);
+            const project = (window.projects || projects || []).find(
+    p => String(p.id) === String(currentProjectId)
+);
             const projectTitle = project ? project.title : 'Project Name';
             
             let sitePhotos = hist.sitePhotos ? hist.sitePhotos.filter(p => p.weekId === weekId) : [];
@@ -8200,7 +8241,7 @@ window.loadProcurementRequestsFromSupabase = async function() {
         .from('procurement_requests')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     console.log('LOAD PRS DATA:', data);
     console.log('LOAD PRS ERROR:', error);
@@ -8309,7 +8350,7 @@ window.loadManilaProcurementFromSupabase = async function() {
         .from('manila_procurement')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     console.log('LOAD MANILA DATA:', data);
     console.log('LOAD MANILA ERROR:', error);
@@ -8381,7 +8422,7 @@ window.loadLocalProcurementFromSupabase = async function() {
         .from('local_procurement')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     console.log('LOAD LOCAL DATA:', data);
     console.log('LOAD LOCAL ERROR:', error);
@@ -8457,7 +8498,7 @@ window.loadMaterialsMasterlistFromSupabase = async function() {
         .from('materials_masterlist')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     console.log('LOAD MATERIALS DATA:', data);
     console.log('LOAD MATERIALS ERROR:', error);
@@ -8502,7 +8543,7 @@ window.loadMaterialsTransactionsFromSupabase = async function() {
         .from('materials_transactions')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     console.log('LOAD MATERIAL TRANSACTIONS DATA:', data);
     console.log('LOAD MATERIAL TRANSACTIONS ERROR:', error);
@@ -8560,7 +8601,7 @@ window.loadFuelRecordsFromSupabase = async function() {
         .select('*')
         .eq('project_id', projectId)
         .order('fuel_date', { ascending: false })
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     console.log('LOAD FUEL DATA:', data);
     console.log('LOAD FUEL ERROR:', error);
@@ -8739,7 +8780,7 @@ window.loadPayrollEmployeesFromSupabase = async function() {
         .from('payroll_employees')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: true });
 
     console.log('LOAD EMPLOYEES DATA:', data);
     console.log('LOAD EMPLOYEES ERROR:', error);
@@ -13261,11 +13302,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   
             if (currentProjectId) {
-                const project = projects.find(p => p.id === currentProjectId);
+                const project = (window.projects || projects || []).find(
+    p => String(p.id) === String(currentProjectId)
+);
                 if (project) {
                     try {
-                        if (document.getElementById('selectedProjectName')) document.getElementById('selectedProjectName').textContent = project.title;
-                        if (document.getElementById('breadcrumbProjectName')) document.getElementById('breadcrumbProjectName').textContent = project.title;
+                        const projectName = project.title || project.name || 'Selected Project';
+
+if (document.getElementById('selectedProjectName')) {
+    document.getElementById('selectedProjectName').textContent = projectName;
+}
+
+if (document.getElementById('breadcrumbProjectName')) {
+    document.getElementById('breadcrumbProjectName').textContent = projectName;
+}
                         if (document.getElementById('subNavBar')) document.getElementById('subNavBar').style.display = 'flex';
                         if (document.getElementById('mobileSubNav')) document.getElementById('mobileSubNav').style.display = 'block';
                     } catch(e) {}
