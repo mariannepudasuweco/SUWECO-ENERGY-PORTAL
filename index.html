@@ -7624,7 +7624,7 @@ window.getBoqInfoFromCharging = function(charging) {
                 modalOverlay.classList.add('active');
                 const modal = modalOverlay.querySelector('.modal');
                 if (modal) modal.classList.add('active');
-                generatePrsNo();
+                window.generatePrsNo();
             }
         };
         
@@ -7638,11 +7638,121 @@ window.getBoqInfoFromCharging = function(charging) {
             }
         };
 
-        window.generatePrsNo = function() {
-            const designation = document.getElementById('prsDesignation').value;
-            const counter = prsCounters[designation];
-            document.getElementById('prsNo').value = `STEC-ALC-${counter}`;
-        };
+function getCurrentProjectForPrs() {
+    const projectId = String(window.currentProjectId || currentProjectId || '');
+
+    return (window.projects || projects || []).find(
+        p => String(p.id) === projectId
+    );
+}
+
+function getProjectCodeForPrs(project) {
+    const rawCode =
+        project?.project_code ||
+        project?.code ||
+        project?.short_code ||
+        '';
+
+    if (rawCode) {
+        return String(rawCode)
+            .replace(/[^A-Z0-9]/gi, '')
+            .toUpperCase()
+            .slice(0, 6);
+    }
+
+    const projectName = String(project?.name || project?.title || 'PROJECT');
+
+    const words = projectName
+        .replace(/[^A-Z0-9 ]/gi, ' ')
+        .split(/\s+/)
+        .filter(Boolean);
+
+    if (words.length >= 2) {
+        return words
+            .map(word => word[0])
+            .join('')
+            .toUpperCase()
+            .slice(0, 6);
+    }
+
+    return projectName
+        .replace(/[^A-Z0-9]/gi, '')
+        .toUpperCase()
+        .slice(0, 6) || 'PRJ';
+}
+
+function getBasePrsCounter(designation) {
+    const baseCounters = {
+        Civil: 25001,
+        Mechanical: 25201,
+        Electrical: 25301,
+        SCADA: 25401,
+        Safety: 25451,
+        Admin: 25501,
+        Accounting: 25701,
+        Logistics: 25801
+    };
+
+    return baseCounters[designation] || 25001;
+}
+
+window.generatePrsNo = async function() {
+    const designation = document.getElementById('prsDesignation')?.value || 'Civil';
+    const prsNoInput = document.getElementById('prsNo');
+
+    if (!prsNoInput) return;
+
+    const project = getCurrentProjectForPrs();
+    const projectId = String(window.currentProjectId || currentProjectId || '');
+
+    if (!projectId) {
+        window.showToast?.('Please select a project first.', 'error');
+        return;
+    }
+
+    const projectCode = getProjectCodeForPrs(project);
+    const baseCounter = getBasePrsCounter(designation);
+
+    let existingPrsNos = [];
+
+    if (window.supabase) {
+        const { data, error } = await window.supabase
+            .from('procurement_requests')
+            .select('prs_no, requestor_designation, project_id')
+            .eq('project_id', projectId)
+            .eq('requestor_designation', designation);
+
+        if (error) {
+            console.error('GENERATE PRS NO ERROR:', error);
+        } else {
+            existingPrsNos = (data || []).map(row => row.prs_no).filter(Boolean);
+        }
+    }
+
+    const localPrsNos = (window.prsRecords || prsRecords || [])
+        .filter(record =>
+            String(record.projectId || record.project_id) === projectId &&
+            String(record.designation || record.requestor_designation) === designation
+        )
+        .map(record => record.prsNo || record.prs_no)
+        .filter(Boolean);
+
+    existingPrsNos = [...existingPrsNos, ...localPrsNos];
+
+    const usedNumbers = existingPrsNos
+        .map(prsNo => {
+            const match = String(prsNo).match(/-(\d+)$/);
+            return match ? Number(match[1]) : 0;
+        })
+        .filter(num => Number.isFinite(num) && num > 0);
+
+    const nextCounter =
+        usedNumbers.length > 0
+            ? Math.max(...usedNumbers) + 1
+            : baseCounter;
+
+    prsNoInput.value = `STEC-${projectCode}-${nextCounter}`;
+};
 
         let prsCurrentPage = 1;
         let prsRowsPerPageValue = 10;
@@ -7897,7 +8007,7 @@ window.getBoqInfoFromCharging = function(charging) {
         const prsDateInput = document.getElementById('prsDate');
         if (prsDateInput) prsDateInput.value = today;
 
-        generatePrsNo();
+        window.generatePrsNo();
     }
 };
 
@@ -8048,7 +8158,6 @@ window.getBoqInfoFromCharging = function(charging) {
             }
         } else {
             prsRecords.unshift(mappedRecord);
-            prsCounters[designation] = (prsCounters[designation] || 0) + 1;
         }
 
         const isManila =
