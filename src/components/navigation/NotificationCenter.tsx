@@ -108,6 +108,16 @@ const getProjectName = (project: any): string => {
   return String(project?.title || project?.name || 'Unnamed Project');
 };
 
+const normalizeProjects = (projects: any[]): Project[] => {
+  return (projects || []).map((project: any) => ({
+    ...project,
+    id: String(project.id),
+    title: project.title || project.name || 'Unnamed Project',
+    name: project.name || project.title || 'Unnamed Project',
+    status: project.status || 'In Bidding',
+  }));
+};
+
 const getRecordStatus = (record: any): string => {
   return String(
     record?.procurementStatus ||
@@ -149,7 +159,7 @@ const isPaymentUnpaid = (record: any): boolean => {
 };
 
 const getRecordDate = (record: any): Date => {
-  return new Date(
+  const date = new Date(
     record?.updatedAt ||
       record?.updated_at ||
       record?.createdAt ||
@@ -159,6 +169,8 @@ const getRecordDate = (record: any): Date => {
       record?.due_date ||
       Date.now()
   );
+
+  return Number.isNaN(date.getTime()) ? new Date() : date;
 };
 
 const getMaterialStock = (material: any): number => {
@@ -290,6 +302,7 @@ const preloadNotificationData = async () => {
 
   try {
     const [
+      projectsResult,
       manilaResult,
       localResult,
       materialsResult,
@@ -300,16 +313,65 @@ const preloadNotificationData = async () => {
       taskDelegationResult,
       tasksResult,
     ] = await Promise.allSettled([
-      supabase.from('manila_procurement').select('*'),
-      supabase.from('local_procurement').select('*'),
-      supabase.from('materials_masterlist').select('*'),
-      supabase.from('fuel_records').select('*'),
-      supabase.from('payroll_runs').select('*'),
-      supabase.from('budget_boq_charging').select('*'),
-      supabase.from('deadlines').select('*'),
-      supabase.from('task_delegation').select('*'),
-      supabase.from('tasks').select('*'),
+      supabase
+        .from('projects')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('manila_procurement')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('local_procurement')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('materials_masterlist')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('fuel_records')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('payroll_runs')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('budget_boq_charging')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('deadlines')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('task_delegation')
+        .select('*')
+        .order('created_at', { ascending: true }),
+
+      supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: true }),
     ]);
+
+    if (
+      projectsResult.status === 'fulfilled' &&
+      !projectsResult.value?.error &&
+      Array.isArray(projectsResult.value?.data)
+    ) {
+      win.projects = normalizeProjects(projectsResult.value.data);
+      window.dispatchEvent(new CustomEvent('projectsUpdated'));
+    }
 
     if (
       manilaResult.status === 'fulfilled' &&
@@ -395,6 +457,7 @@ export function NotificationCenter({
     'All' | 'Critical' | 'Delays' | 'Due Soon' | 'Completed'
   >('All');
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [allProjects, setAllProjects] = useState<Project[]>([]);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -406,498 +469,591 @@ export function NotificationCenter({
 
       isGenerating = true;
 
-      await preloadNotificationData();
+      try {
+        await preloadNotificationData();
 
-      if (!isMounted) {
-        isGenerating = false;
-        return;
-      }
+        if (!isMounted) return;
 
-      const projects: Project[] = (window as any).projects || [];
-      const manilaRecords: any[] = (window as any).manilaRecords || [];
-      const localRecords: any[] = (window as any).localRecords || [];
-      const materialsMasterlist: any[] =
-        (window as any).materialsMasterlist || [];
-      const fuelRecords: any[] = (window as any).fuelRecords || [];
-      const payrollRuns: any[] = (window as any).payrollRuns || [];
-      const projectSchedules: any = (window as any).projectSchedules || {};
-      const mockTasks: any[] = (window as any).mockTasks || [];
-      const wbsTasks: any[] = (window as any).wbsTasks || [];
-      const taskRecords: any[] = (window as any).taskRecords || [];
-      const deadlineRecords: any[] =
-        (window as any).deadlineRecords || (window as any).deadlines || [];
-      const taskDelegationRecords: any[] =
-        (window as any).taskDelegationRecords ||
-        (window as any).taskDelegations ||
-        (window as any).delegatedTasks ||
-        [];
+        const projectSources = [
+  ...((window as any).projects || []),
+  ...JSON.parse(localStorage.getItem('projects') || '[]'),
+];
 
-      const boqRecords: any[] =
-        (window as any).boqChargingRecords ||
-        (window as any).boqCharging ||
-        [];
+const projects: Project[] = normalizeProjects(
+  Array.from(
+    new Map(
+      projectSources.map((project: any) => [
+        String(project.id),
+        project,
+      ])
+    ).values()
+  )
+);
 
-      const generated: NotificationItem[] = [];
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+console.log('[NOTIFICATION DEBUG] all loaded projects:', projects);
+console.log('[NOTIFICATION DEBUG] project count:', projects.length);
 
-      projects.forEach((project: any) => {
-        const projectId = String(project?.id || '');
-        const projectName = getProjectName(project);
+setAllProjects(projects);
 
-        if (!projectId) return;
+        const manilaRecords: any[] = (window as any).manilaRecords || [];
+        const localRecords: any[] = (window as any).localRecords || [];
+        const materialsMasterlist: any[] =
+          (window as any).materialsMasterlist || [];
+        const fuelRecords: any[] = (window as any).fuelRecords || [];
+        const payrollRuns: any[] = (window as any).payrollRuns || [];
+        const projectSchedules: any = (window as any).projectSchedules || {};
+        const mockTasks: any[] = (window as any).mockTasks || [];
+        const wbsTasks: any[] = (window as any).wbsTasks || [];
+        const taskRecords: any[] = (window as any).taskRecords || [];
+        const deadlineRecords: any[] =
+          (window as any).deadlineRecords || (window as any).deadlines || [];
+        const taskDelegationRecords: any[] =
+          (window as any).taskDelegationRecords ||
+          (window as any).taskDelegations ||
+          (window as any).delegatedTasks ||
+          [];
 
-        if (project.status === 'Completed' || project.status === 'Cancelled') {
-          return;
-        }
+        const boqRecords: any[] =
+          (window as any).boqChargingRecords ||
+          (window as any).boqCharging ||
+          [];
 
-        const sched = projectSchedules[projectId];
+        const generated: NotificationItem[] = [];
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-        if (sched) {
-          Object.entries(sched).forEach(([code, data]: [string, any]) => {
-            if (!data || String(code).startsWith('_')) return;
+        projects.forEach((project: any) => {
+          const projectId = String(project?.id || '');
+          const projectName = getProjectName(project);
 
-            if (data.status === 'Overdue') {
+          if (!projectId) return;
+
+          const projectStatus = String(project.status || '').toLowerCase();
+
+          if (projectStatus === 'completed' || projectStatus === 'cancelled') {
+            return;
+          }
+
+          const sched = projectSchedules[projectId];
+
+          if (sched) {
+            Object.entries(sched).forEach(([code, data]: [string, any]) => {
+              if (!data || String(code).startsWith('_')) return;
+
+              if (data.status === 'Overdue') {
+                generated.push({
+                  id: `notif-schedule-overdue-${projectId}-${code}`,
+                  projectId,
+                  projectName,
+                  priority: 'Overdue',
+                  module: 'project' as ModuleType,
+                  targetPage: 'project-schedule' as AppPage,
+                  summary: `Task ${code} is overdue. Target end was ${
+                    data.targetEnd || 'not set'
+                  }.`,
+                  timestamp: new Date(data.targetEnd || Date.now()),
+                  read: false,
+                });
+              }
+            });
+          }
+
+          const projectManilaRecords = manilaRecords.filter(
+            (record) => getProjectId(record) === projectId
+          );
+
+          const pendingManilaRecords = projectManilaRecords.filter((record) =>
+            isProcurementPending(record)
+          );
+
+          const unpaidManilaRecords = projectManilaRecords.filter((record) =>
+            isPaymentUnpaid(record)
+          );
+
+          if (pendingManilaRecords.length > 0) {
+            generated.push({
+              id: `notif-manila-pending-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'High Priority',
+              module: 'procurement' as ModuleType,
+              targetPage: 'manila' as AppPage,
+              summary: `${pendingManilaRecords.length} Manila procurement record${
+                pendingManilaRecords.length > 1 ? 's are' : ' is'
+              } still pending.`,
+              timestamp: getRecordDate(pendingManilaRecords[0]),
+              read: false,
+            });
+          }
+
+          if (unpaidManilaRecords.length > 0) {
+            generated.push({
+              id: `notif-manila-unpaid-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Warning',
+              module: 'procurement' as ModuleType,
+              targetPage: 'manila' as AppPage,
+              summary: `${unpaidManilaRecords.length} Manila procurement payment${
+                unpaidManilaRecords.length > 1 ? 's are' : ' is'
+              } still unpaid.`,
+              timestamp: getRecordDate(unpaidManilaRecords[0]),
+              read: false,
+            });
+          }
+
+          const projectLocalRecords = localRecords.filter(
+            (record) => getProjectId(record) === projectId
+          );
+
+          const pendingLocalRecords = projectLocalRecords.filter((record) =>
+            isProcurementPending(record)
+          );
+
+          const unpaidLocalRecords = projectLocalRecords.filter((record) =>
+            isPaymentUnpaid(record)
+          );
+
+          if (pendingLocalRecords.length > 0) {
+            generated.push({
+              id: `notif-local-pending-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'High Priority',
+              module: 'procurement' as ModuleType,
+              targetPage: 'local' as AppPage,
+              summary: `${pendingLocalRecords.length} Local procurement record${
+                pendingLocalRecords.length > 1 ? 's are' : ' is'
+              } still pending.`,
+              timestamp: getRecordDate(pendingLocalRecords[0]),
+              read: false,
+            });
+          }
+
+          if (unpaidLocalRecords.length > 0) {
+            generated.push({
+              id: `notif-local-unpaid-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Warning',
+              module: 'procurement' as ModuleType,
+              targetPage: 'local' as AppPage,
+              summary: `${unpaidLocalRecords.length} Local procurement payment${
+                unpaidLocalRecords.length > 1 ? 's are' : ' is'
+              } still unpaid.`,
+              timestamp: getRecordDate(unpaidLocalRecords[0]),
+              read: false,
+            });
+          }
+
+          const projectMaterials = materialsMasterlist.filter((material) => {
+            const materialProjectId = getProjectId(material);
+
+            if (!materialProjectId) return false;
+
+            return materialProjectId === projectId;
+          });
+
+          const lowStockMaterials = projectMaterials.filter((material) => {
+            const stock = getMaterialStock(material);
+            const minStock = getMaterialMinStock(material);
+
+            return stock <= 0 || stock <= minStock;
+          });
+
+          if (lowStockMaterials.length > 0) {
+            generated.push({
+              id: `notif-material-low-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Warning',
+              module: 'procurement' as ModuleType,
+              targetPage: 'materials' as AppPage,
+              summary: `${lowStockMaterials.length} material${
+                lowStockMaterials.length > 1 ? 's are' : ' is'
+              } low or out of stock.`,
+              timestamp: new Date(),
+              read: false,
+            });
+          }
+
+          const projectFuelRecords = fuelRecords.filter(
+            (record) => getProjectId(record) === projectId
+          );
+
+          if (projectFuelRecords.length > 0) {
+            const totalFuelIn = projectFuelRecords.reduce(
+              (sum, record) => sum + getFuelQtyIn(record),
+              0
+            );
+
+            const totalFuelOut = projectFuelRecords.reduce(
+              (sum, record) => sum + getFuelQtyOut(record),
+              0
+            );
+
+            const remainingFuel = totalFuelIn - totalFuelOut;
+
+            if (remainingFuel <= 0) {
               generated.push({
-                id: `notif-schedule-overdue-${projectId}-${code}`,
+                id: `notif-fuel-out-${projectId}`,
                 projectId,
                 projectName,
-                priority: 'Overdue',
-                module: 'project' as ModuleType,
-                targetPage: 'project-schedule' as AppPage,
-                summary: `Task ${code} is overdue. Target end was ${
-                  data.targetEnd || 'not set'
-                }.`,
-                timestamp: new Date(data.targetEnd || Date.now()),
+                priority: 'Critical',
+                module: 'procurement' as ModuleType,
+                targetPage: 'fuel' as AppPage,
+                summary: `Fuel inventory is out or negative. Remaining fuel: ${remainingFuel.toLocaleString()} L.`,
+                timestamp: new Date(),
+                read: false,
+              });
+            } else if (remainingFuel <= 100) {
+              generated.push({
+                id: `notif-fuel-low-${projectId}`,
+                projectId,
+                projectName,
+                priority: 'Warning',
+                module: 'procurement' as ModuleType,
+                targetPage: 'fuel' as AppPage,
+                summary: `Fuel inventory is low. Remaining fuel: ${remainingFuel.toLocaleString()} L.`,
+                timestamp: new Date(),
                 read: false,
               });
             }
-          });
-        }
-
-        const projectManilaRecords = manilaRecords.filter(
-          (record) => getProjectId(record) === projectId
-        );
-
-        const pendingManilaRecords = projectManilaRecords.filter((record) =>
-          isProcurementPending(record)
-        );
-
-        const unpaidManilaRecords = projectManilaRecords.filter((record) =>
-          isPaymentUnpaid(record)
-        );
-
-        if (pendingManilaRecords.length > 0) {
-          generated.push({
-            id: `notif-manila-pending-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'High Priority',
-            module: 'procurement' as ModuleType,
-            targetPage: 'manila' as AppPage,
-            summary: `${pendingManilaRecords.length} Manila procurement record${
-              pendingManilaRecords.length > 1 ? 's are' : ' is'
-            } still pending.`,
-            timestamp: getRecordDate(pendingManilaRecords[0]),
-            read: false,
-          });
-        }
-
-        if (unpaidManilaRecords.length > 0) {
-          generated.push({
-            id: `notif-manila-unpaid-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Warning',
-            module: 'procurement' as ModuleType,
-            targetPage: 'manila' as AppPage,
-            summary: `${unpaidManilaRecords.length} Manila procurement payment${
-              unpaidManilaRecords.length > 1 ? 's are' : ' is'
-            } still unpaid.`,
-            timestamp: getRecordDate(unpaidManilaRecords[0]),
-            read: false,
-          });
-        }
-
-        const projectLocalRecords = localRecords.filter(
-          (record) => getProjectId(record) === projectId
-        );
-
-        const pendingLocalRecords = projectLocalRecords.filter((record) =>
-          isProcurementPending(record)
-        );
-
-        const unpaidLocalRecords = projectLocalRecords.filter((record) =>
-          isPaymentUnpaid(record)
-        );
-
-        if (pendingLocalRecords.length > 0) {
-          generated.push({
-            id: `notif-local-pending-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'High Priority',
-            module: 'procurement' as ModuleType,
-            targetPage: 'local' as AppPage,
-            summary: `${pendingLocalRecords.length} Local procurement record${
-              pendingLocalRecords.length > 1 ? 's are' : ' is'
-            } still pending.`,
-            timestamp: getRecordDate(pendingLocalRecords[0]),
-            read: false,
-          });
-        }
-
-        if (unpaidLocalRecords.length > 0) {
-          generated.push({
-            id: `notif-local-unpaid-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Warning',
-            module: 'procurement' as ModuleType,
-            targetPage: 'local' as AppPage,
-            summary: `${unpaidLocalRecords.length} Local procurement payment${
-              unpaidLocalRecords.length > 1 ? 's are' : ' is'
-            } still unpaid.`,
-            timestamp: getRecordDate(unpaidLocalRecords[0]),
-            read: false,
-          });
-        }
-
-        const projectMaterials = materialsMasterlist.filter((material) => {
-          const materialProjectId = getProjectId(material);
-
-          if (!materialProjectId) return false;
-
-          return materialProjectId === projectId;
-        });
-
-        const lowStockMaterials = projectMaterials.filter((material) => {
-          const stock = getMaterialStock(material);
-          const minStock = getMaterialMinStock(material);
-
-          return stock <= 0 || stock <= minStock;
-        });
-
-        if (lowStockMaterials.length > 0) {
-          generated.push({
-            id: `notif-material-low-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Warning',
-            module: 'procurement' as ModuleType,
-            targetPage: 'materials' as AppPage,
-            summary: `${lowStockMaterials.length} material${
-              lowStockMaterials.length > 1 ? 's are' : ' is'
-            } low or out of stock.`,
-            timestamp: new Date(),
-            read: false,
-          });
-        }
-
-        const projectFuelRecords = fuelRecords.filter(
-          (record) => getProjectId(record) === projectId
-        );
-
-        if (projectFuelRecords.length > 0) {
-          const totalFuelIn = projectFuelRecords.reduce(
-            (sum, record) => sum + getFuelQtyIn(record),
-            0
-          );
-
-          const totalFuelOut = projectFuelRecords.reduce(
-            (sum, record) => sum + getFuelQtyOut(record),
-            0
-          );
-
-          const remainingFuel = totalFuelIn - totalFuelOut;
-
-          if (remainingFuel <= 0) {
-            generated.push({
-              id: `notif-fuel-out-${projectId}`,
-              projectId,
-              projectName,
-              priority: 'Critical',
-              module: 'procurement' as ModuleType,
-              targetPage: 'fuel' as AppPage,
-              summary: `Fuel inventory is out or negative. Remaining fuel: ${remainingFuel.toLocaleString()} L.`,
-              timestamp: new Date(),
-              read: false,
-            });
-          } else if (remainingFuel <= 100) {
-            generated.push({
-              id: `notif-fuel-low-${projectId}`,
-              projectId,
-              projectName,
-              priority: 'Warning',
-              module: 'procurement' as ModuleType,
-              targetPage: 'fuel' as AppPage,
-              summary: `Fuel inventory is low. Remaining fuel: ${remainingFuel.toLocaleString()} L.`,
-              timestamp: new Date(),
-              read: false,
-            });
           }
-        }
 
-        const projectPayrollRuns = payrollRuns.filter((record) => {
-          const payrollProjectId = getProjectId(record);
+          const projectPayrollRuns = payrollRuns.filter((record) => {
+            const payrollProjectId = getProjectId(record);
 
-          return payrollProjectId === projectId;
-        });
-
-        const notGeneratedPayrollRuns = projectPayrollRuns.filter((record) => {
-          const status = String(record?.status || '').toUpperCase();
-
-          return status === 'NOT GENERATED';
-        });
-
-        if (notGeneratedPayrollRuns.length > 0) {
-          generated.push({
-            id: `notif-payroll-not-generated-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Warning',
-            module: 'payroll' as ModuleType,
-            targetPage: 'payroll-dashboard' as AppPage,
-            summary: `${notGeneratedPayrollRuns.length} payroll run${
-              notGeneratedPayrollRuns.length > 1 ? 's are' : ' is'
-            } not yet generated.`,
-            timestamp: getRecordDate(notGeneratedPayrollRuns[0]),
-            read: false,
-          });
-        }
-
-        const projectBoqRecords = boqRecords.filter(
-          (record) => getProjectId(record) === projectId
-        );
-
-        const overBudgetBoqRecords = projectBoqRecords.filter((record) => {
-          const remaining = getBoqRemaining(record);
-
-          return remaining !== null && remaining < 0;
-        });
-
-        if (overBudgetBoqRecords.length > 0) {
-          generated.push({
-            id: `notif-boq-overbudget-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Critical',
-            module: 'budget' as ModuleType,
-            targetPage: 'boq-charging' as AppPage,
-            summary: `${overBudgetBoqRecords.length} BOQ charging item${
-              overBudgetBoqRecords.length > 1 ? 's are' : ' is'
-            } over budget.`,
-            timestamp: new Date(),
-            read: false,
-          });
-        }
-
-        const projectDeadlineRecords = deadlineRecords.filter(
-          (record) => getProjectId(record) === projectId
-        );
-
-        const overdueDeadlines = projectDeadlineRecords.filter((record) => {
-          if (isTaskCompleted(record)) return false;
-
-          const dueDate = getTaskDueDate(record);
-
-          return !!dueDate && dueDate < today;
-        });
-
-        const dueSoonDeadlines = projectDeadlineRecords.filter((record) => {
-          if (isTaskCompleted(record)) return false;
-
-          const dueDate = getTaskDueDate(record);
-
-          if (!dueDate || dueDate < today) return false;
-
-          return dueDate.getTime() - today.getTime() < 1000 * 60 * 60 * 24 * 7;
-        });
-
-        if (overdueDeadlines.length > 0) {
-          generated.push({
-            id: `notif-deadlines-overdue-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Overdue',
-            module: 'project' as ModuleType,
-            targetPage: 'deadlines' as AppPage,
-            summary: `${overdueDeadlines.length} deadline${
-              overdueDeadlines.length > 1 ? 's are' : ' is'
-            } overdue.`,
-            timestamp: getRecordDate(overdueDeadlines[0]),
-            read: false,
-          });
-        }
-
-        if (dueSoonDeadlines.length > 0) {
-          generated.push({
-            id: `notif-deadlines-due-soon-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Due Soon',
-            module: 'project' as ModuleType,
-            targetPage: 'deadlines' as AppPage,
-            summary: `${dueSoonDeadlines.length} deadline${
-              dueSoonDeadlines.length > 1 ? 's are' : ' is'
-            } due soon.`,
-            timestamp: getRecordDate(dueSoonDeadlines[0]),
-            read: false,
-          });
-        }
-
-        const projectTaskDelegations = taskDelegationRecords.filter(
-          (record) => getProjectId(record) === projectId
-        );
-
-        const overdueDelegatedTasks = projectTaskDelegations.filter((record) => {
-          if (isTaskCompleted(record)) return false;
-
-          const dueDate = getTaskDueDate(record);
-
-          return !!dueDate && dueDate < today;
-        });
-
-        const pendingDelegatedTasks = projectTaskDelegations.filter((record) => {
-          if (isTaskCompleted(record)) return false;
-
-          const dueDate = getTaskDueDate(record);
-
-          return !dueDate || dueDate >= today;
-        });
-
-        if (overdueDelegatedTasks.length > 0) {
-          generated.push({
-            id: `notif-task-delegation-overdue-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Overdue',
-            module: 'project' as ModuleType,
-            targetPage: 'task-delegation' as AppPage,
-            summary: `${overdueDelegatedTasks.length} delegated task${
-              overdueDelegatedTasks.length > 1 ? 's are' : ' is'
-            } overdue.`,
-            timestamp: getRecordDate(overdueDelegatedTasks[0]),
-            read: false,
-          });
-        } else if (pendingDelegatedTasks.length > 0) {
-          generated.push({
-            id: `notif-task-delegation-pending-${projectId}`,
-            projectId,
-            projectName,
-            priority: 'Informational',
-            module: 'project' as ModuleType,
-            targetPage: 'task-delegation' as AppPage,
-            summary: `${pendingDelegatedTasks.length} delegated task${
-              pendingDelegatedTasks.length > 1 ? 's are' : ' is'
-            } still pending.`,
-            timestamp: getRecordDate(pendingDelegatedTasks[0]),
-            read: false,
-          });
-        }
-      });
-
-      const storedHist = localStorage.getItem('payroll_history');
-
-      if (storedHist) {
-        try {
-          const history = JSON.parse(storedHist);
-
-          const notGeneratedPayroll = history.filter((record: any) => {
-            const status = String(record?.status || '').toUpperCase();
-
-            return status === 'NOT GENERATED';
+            return payrollProjectId === projectId;
           });
 
-          const payrollByProject = notGeneratedPayroll.reduce(
-            (groups: Record<string, any[]>, record: any) => {
-              const key = String(
-                record?.projectId ||
-                  record?.project_id ||
-                  record?.selectedProjectId ||
-                  record?.project_id_fk ||
-                  'global'
-              );
+          const notGeneratedPayrollRuns = projectPayrollRuns.filter(
+            (record) => {
+              const status = String(record?.status || '').toUpperCase();
 
-              if (!groups[key]) groups[key] = [];
-              groups[key].push(record);
-
-              return groups;
-            },
-            {}
+              return status === 'NOT GENERATED';
+            }
           );
 
-          Object.entries(payrollByProject).forEach(([projectId, rows]) => {
-            const payrollRows = rows as any[];
-
-            if (payrollRows.length === 0) return;
-
-            const alreadyExists = generated.some(
-              (item) => item.id === `notif-payroll-not-generated-${projectId}`
-            );
-
-            if (alreadyExists) return;
-
-            const matchingProject = projects.find(
-              (project: any) => String(project?.id) === String(projectId)
-            );
-
-            const isGlobal = projectId === 'global' || projectId === 'all';
-
+          if (notGeneratedPayrollRuns.length > 0) {
             generated.push({
               id: `notif-payroll-not-generated-${projectId}`,
-              projectId: isGlobal ? 'global' : projectId,
-              projectName: isGlobal
-                ? 'Global Notifications'
-                : getProjectName(matchingProject),
+              projectId,
+              projectName,
               priority: 'Warning',
               module: 'payroll' as ModuleType,
               targetPage: 'payroll-dashboard' as AppPage,
-              summary: `${payrollRows.length} payroll run${
-                payrollRows.length > 1 ? 's are' : ' is'
+              summary: `${notGeneratedPayrollRuns.length} payroll run${
+                notGeneratedPayrollRuns.length > 1 ? 's are' : ' is'
               } not yet generated.`,
-              timestamp: new Date(),
-              read: false,
-            });
-          });
-        } catch (error) {
-          console.error('Failed to parse payroll history:', error);
-        }
-      }
-
-      wbsTasks.forEach((task: any) => {
-        if (task.status !== 'COMPLETED' && task.date) {
-          const dueDate = new Date(task.date);
-
-          if (dueDate < today) {
-            generated.push({
-              id: `notif-wbs-overdue-${task.wbs}`,
-              projectId: 'global',
-              projectName: 'Global Notifications',
-              priority: 'Overdue',
-              module: 'project' as ModuleType,
-              targetPage: 'wbs-checklist' as AppPage,
-              summary: `WBS ${task.wbs}: ${task.name} is overdue.`,
-              timestamp: dueDate,
+              timestamp: getRecordDate(notGeneratedPayrollRuns[0]),
               read: false,
             });
           }
-        }
-      });
 
-      mockTasks.forEach((task: any) => {
-        if (task.status !== 'COMPLETED' && task.due) {
-          const dueDate = new Date(task.due);
+          const projectBoqRecords = boqRecords.filter(
+            (record) => getProjectId(record) === projectId
+          );
+
+          const overBudgetBoqRecords = projectBoqRecords.filter((record) => {
+            const remaining = getBoqRemaining(record);
+
+            return remaining !== null && remaining < 0;
+          });
+
+          if (overBudgetBoqRecords.length > 0) {
+            generated.push({
+              id: `notif-boq-overbudget-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Critical',
+              module: 'budget' as ModuleType,
+              targetPage: 'boq-charging' as AppPage,
+              summary: `${overBudgetBoqRecords.length} BOQ charging item${
+                overBudgetBoqRecords.length > 1 ? 's are' : ' is'
+              } over budget.`,
+              timestamp: new Date(),
+              read: false,
+            });
+          }
+
+          const projectDeadlineRecords = deadlineRecords.filter(
+            (record) => getProjectId(record) === projectId
+          );
+
+          const overdueDeadlines = projectDeadlineRecords.filter((record) => {
+            if (isTaskCompleted(record)) return false;
+
+            const dueDate = getTaskDueDate(record);
+
+            return !!dueDate && dueDate < today;
+          });
+
+          const dueSoonDeadlines = projectDeadlineRecords.filter((record) => {
+            if (isTaskCompleted(record)) return false;
+
+            const dueDate = getTaskDueDate(record);
+
+            if (!dueDate || dueDate < today) return false;
+
+            return dueDate.getTime() - today.getTime() < 1000 * 60 * 60 * 24 * 7;
+          });
+
+          if (overdueDeadlines.length > 0) {
+            generated.push({
+              id: `notif-deadlines-overdue-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Overdue',
+              module: 'project' as ModuleType,
+              targetPage: 'deadlines' as AppPage,
+              summary: `${overdueDeadlines.length} deadline${
+                overdueDeadlines.length > 1 ? 's are' : ' is'
+              } overdue.`,
+              timestamp: getRecordDate(overdueDeadlines[0]),
+              read: false,
+            });
+          }
+
+          if (dueSoonDeadlines.length > 0) {
+            generated.push({
+              id: `notif-deadlines-due-soon-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Due Soon',
+              module: 'project' as ModuleType,
+              targetPage: 'deadlines' as AppPage,
+              summary: `${dueSoonDeadlines.length} deadline${
+                dueSoonDeadlines.length > 1 ? 's are' : ' is'
+              } due soon.`,
+              timestamp: getRecordDate(dueSoonDeadlines[0]),
+              read: false,
+            });
+          }
+
+          const projectTaskDelegations = taskDelegationRecords.filter(
+            (record) => getProjectId(record) === projectId
+          );
+
+          const overdueDelegatedTasks = projectTaskDelegations.filter(
+            (record) => {
+              if (isTaskCompleted(record)) return false;
+
+              const dueDate = getTaskDueDate(record);
+
+              return !!dueDate && dueDate < today;
+            }
+          );
+
+          const pendingDelegatedTasks = projectTaskDelegations.filter(
+            (record) => {
+              if (isTaskCompleted(record)) return false;
+
+              const dueDate = getTaskDueDate(record);
+
+              return !dueDate || dueDate >= today;
+            }
+          );
+
+          if (overdueDelegatedTasks.length > 0) {
+            generated.push({
+              id: `notif-task-delegation-overdue-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Overdue',
+              module: 'project' as ModuleType,
+              targetPage: 'task-delegation' as AppPage,
+              summary: `${overdueDelegatedTasks.length} delegated task${
+                overdueDelegatedTasks.length > 1 ? 's are' : ' is'
+              } overdue.`,
+              timestamp: getRecordDate(overdueDelegatedTasks[0]),
+              read: false,
+            });
+          } else if (pendingDelegatedTasks.length > 0) {
+            generated.push({
+              id: `notif-task-delegation-pending-${projectId}`,
+              projectId,
+              projectName,
+              priority: 'Informational',
+              module: 'project' as ModuleType,
+              targetPage: 'task-delegation' as AppPage,
+              summary: `${pendingDelegatedTasks.length} delegated task${
+                pendingDelegatedTasks.length > 1 ? 's are' : ' is'
+              } still pending.`,
+              timestamp: getRecordDate(pendingDelegatedTasks[0]),
+              read: false,
+            });
+          }
+        });
+
+        const storedHist = localStorage.getItem('payroll_history');
+
+        if (storedHist) {
+          try {
+            const history = JSON.parse(storedHist);
+
+            const notGeneratedPayroll = history.filter((record: any) => {
+              const status = String(record?.status || '').toUpperCase();
+
+              return status === 'NOT GENERATED';
+            });
+
+            const payrollByProject = notGeneratedPayroll.reduce(
+              (groups: Record<string, any[]>, record: any) => {
+                const key = String(
+                  record?.projectId ||
+                    record?.project_id ||
+                    record?.selectedProjectId ||
+                    record?.project_id_fk ||
+                    'global'
+                );
+
+                if (!groups[key]) groups[key] = [];
+                groups[key].push(record);
+
+                return groups;
+              },
+              {}
+            );
+
+            Object.entries(payrollByProject).forEach(([projectId, rows]) => {
+              const payrollRows = rows as any[];
+
+              if (payrollRows.length === 0) return;
+
+              const alreadyExists = generated.some(
+                (item) => item.id === `notif-payroll-not-generated-${projectId}`
+              );
+
+              if (alreadyExists) return;
+
+              const matchingProject = projects.find(
+                (project: any) => String(project?.id) === String(projectId)
+              );
+
+              const isGlobal = projectId === 'global' || projectId === 'all';
+
+              generated.push({
+                id: `notif-payroll-not-generated-${projectId}`,
+                projectId: isGlobal ? 'global' : projectId,
+                projectName: isGlobal
+                  ? 'Global Notifications'
+                  : getProjectName(matchingProject),
+                priority: 'Warning',
+                module: 'payroll' as ModuleType,
+                targetPage: 'payroll-dashboard' as AppPage,
+                summary: `${payrollRows.length} payroll run${
+                  payrollRows.length > 1 ? 's are' : ' is'
+                } not yet generated.`,
+                timestamp: new Date(),
+                read: false,
+              });
+            });
+          } catch (error) {
+            console.error('Failed to parse payroll history:', error);
+          }
+        }
+
+        wbsTasks.forEach((task: any) => {
+          if (task.status !== 'COMPLETED' && task.date) {
+            const dueDate = new Date(task.date);
+
+            if (dueDate < today) {
+              const taskProjectId = getProjectId(task) || 'global';
+              const matchingProject = projects.find(
+                (project: any) => String(project?.id) === String(taskProjectId)
+              );
+
+              generated.push({
+                id: `notif-wbs-overdue-${taskProjectId}-${task.wbs}`,
+                projectId: taskProjectId,
+                projectName:
+                  taskProjectId === 'global'
+                    ? 'Global Notifications'
+                    : getProjectName(matchingProject),
+                priority: 'Overdue',
+                module: 'project' as ModuleType,
+                targetPage: 'wbs-checklist' as AppPage,
+                summary: `WBS ${task.wbs}: ${task.name} is overdue.`,
+                timestamp: dueDate,
+                read: false,
+              });
+            }
+          }
+        });
+
+        mockTasks.forEach((task: any) => {
+          if (task.status !== 'COMPLETED' && task.due) {
+            const dueDate = new Date(task.due);
+            const taskProjectId = getProjectId(task) || 'global';
+            const matchingProject = projects.find(
+              (project: any) => String(project?.id) === String(taskProjectId)
+            );
+
+            const projectName =
+              taskProjectId === 'global'
+                ? 'Global Notifications'
+                : getProjectName(matchingProject);
+
+            if (dueDate < today) {
+              generated.push({
+                id: `notif-task-overdue-${taskProjectId}-${task.wbs}`,
+                projectId: taskProjectId,
+                projectName,
+                priority: 'Overdue',
+                module: 'project' as ModuleType,
+                targetPage: 'tasks' as AppPage,
+                summary: `Task ${task.wbs}: ${task.name} is overdue. Due date was ${task.due}.`,
+                timestamp: dueDate,
+                read: false,
+              });
+            } else if (
+              dueDate.getTime() - today.getTime() <
+              1000 * 60 * 60 * 24 * 7
+            ) {
+              generated.push({
+                id: `notif-task-soon-${taskProjectId}-${task.wbs}`,
+                projectId: taskProjectId,
+                projectName,
+                priority: 'Due Soon',
+                module: 'project' as ModuleType,
+                targetPage: 'tasks' as AppPage,
+                summary: `Task ${task.wbs}: ${task.name} is due soon. Due date is ${task.due}.`,
+                timestamp: dueDate,
+                read: false,
+              });
+            }
+          }
+        });
+
+        taskRecords.forEach((task: any) => {
+          if (isTaskCompleted(task)) return;
+
+          const taskProjectId = getProjectId(task) || 'global';
+          const dueDate = getTaskDueDate(task);
+
+          if (!dueDate) return;
+
+          const matchingProject = projects.find(
+            (project: any) => String(project?.id) === String(taskProjectId)
+          );
+
+          const projectName =
+            taskProjectId === 'global'
+              ? 'Global Notifications'
+              : getProjectName(matchingProject);
 
           if (dueDate < today) {
             generated.push({
-              id: `notif-task-overdue-${task.wbs}`,
-              projectId: 'global',
-              projectName: 'Global Notifications',
+              id: `notif-task-record-overdue-${taskProjectId}-${
+                task.id || task.wbs || task.name
+              }`,
+              projectId: taskProjectId,
+              projectName,
               priority: 'Overdue',
               module: 'project' as ModuleType,
               targetPage: 'tasks' as AppPage,
-              summary: `Task ${task.wbs}: ${task.name} is overdue. Due date was ${task.due}.`,
+              summary: `${task.name || task.title || 'Task'} is overdue.`,
               timestamp: dueDate,
               read: false,
             });
@@ -906,88 +1062,45 @@ export function NotificationCenter({
             1000 * 60 * 60 * 24 * 7
           ) {
             generated.push({
-              id: `notif-task-soon-${task.wbs}`,
-              projectId: 'global',
-              projectName: 'Global Notifications',
+              id: `notif-task-record-soon-${taskProjectId}-${
+                task.id || task.wbs || task.name
+              }`,
+              projectId: taskProjectId,
+              projectName,
               priority: 'Due Soon',
               module: 'project' as ModuleType,
               targetPage: 'tasks' as AppPage,
-              summary: `Task ${task.wbs}: ${task.name} is due soon. Due date is ${task.due}.`,
+              summary: `${task.name || task.title || 'Task'} is due soon.`,
               timestamp: dueDate,
               read: false,
             });
           }
-        }
-      });
+        });
 
-      taskRecords.forEach((task: any) => {
-        if (isTaskCompleted(task)) return;
+        setNotifications((prev) => {
+          const readStatusMap = new Map(
+            prev.map((item) => [item.id, item.read])
+          );
 
-        const taskProjectId = getProjectId(task) || 'global';
-        const dueDate = getTaskDueDate(task);
+          return generated
+            .map((item) => ({
+              ...item,
+              read: readStatusMap.has(item.id)
+                ? Boolean(readStatusMap.get(item.id))
+                : item.read,
+            }))
+            .sort((a, b) => {
+              const priorityDiff =
+                PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
 
-        if (!dueDate) return;
+              if (priorityDiff !== 0) return priorityDiff;
 
-        const matchingProject = projects.find(
-          (project: any) => String(project?.id) === String(taskProjectId)
-        );
-
-        const projectName =
-          taskProjectId === 'global'
-            ? 'Global Notifications'
-            : getProjectName(matchingProject);
-
-        if (dueDate < today) {
-          generated.push({
-            id: `notif-task-record-overdue-${taskProjectId}-${task.id || task.wbs || task.name}`,
-            projectId: taskProjectId,
-            projectName,
-            priority: 'Overdue',
-            module: 'project' as ModuleType,
-            targetPage: 'tasks' as AppPage,
-            summary: `${task.name || task.title || 'Task'} is overdue.`,
-            timestamp: dueDate,
-            read: false,
-          });
-        } else if (
-          dueDate.getTime() - today.getTime() <
-          1000 * 60 * 60 * 24 * 7
-        ) {
-          generated.push({
-            id: `notif-task-record-soon-${taskProjectId}-${task.id || task.wbs || task.name}`,
-            projectId: taskProjectId,
-            projectName,
-            priority: 'Due Soon',
-            module: 'project' as ModuleType,
-            targetPage: 'tasks' as AppPage,
-            summary: `${task.name || task.title || 'Task'} is due soon.`,
-            timestamp: dueDate,
-            read: false,
-          });
-        }
-      });
-
-      setNotifications((prev) => {
-        const readStatusMap = new Map(prev.map((item) => [item.id, item.read]));
-
-        return generated
-          .map((item) => ({
-            ...item,
-            read: readStatusMap.has(item.id)
-              ? Boolean(readStatusMap.get(item.id))
-              : item.read,
-          }))
-          .sort((a, b) => {
-            const priorityDiff =
-              PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
-
-            if (priorityDiff !== 0) return priorityDiff;
-
-            return b.timestamp.getTime() - a.timestamp.getTime();
-          });
-      });
-
-      isGenerating = false;
+              return b.timestamp.getTime() - a.timestamp.getTime();
+            });
+        });
+      } finally {
+        isGenerating = false;
+      }
     };
 
     generateNotifications();
@@ -1069,60 +1182,90 @@ export function NotificationCenter({
   }, [activeFilter, notifications]);
 
   const groupedNotifications = useMemo(() => {
-    const projectGroups: Record<
-      string,
-      {
-        projectId: string;
-        projectName: string;
-        items: NotificationItem[];
+  const projectGroups: Record<
+    string,
+    {
+      projectId: string;
+      projectName: string;
+      items: NotificationItem[];
+      hasNoAlerts?: boolean;
+    }
+  > = {};
+
+  // 1. Create group for every project first
+  allProjects.forEach((project: any) => {
+    const projectId = String(project.id || '');
+
+    if (!projectId) return;
+
+    projectGroups[projectId] = {
+      projectId,
+      projectName: project.title || project.name || 'Unnamed Project',
+      items: [],
+      hasNoAlerts: true,
+    };
+  });
+
+  // 2. Add global group if needed
+  filteredNotifications.forEach((notification) => {
+    const key = String(notification.projectId || 'global');
+
+    if (!projectGroups[key]) {
+      projectGroups[key] = {
+        projectId: key,
+        projectName: notification.projectName || 'Global Notifications',
+        items: [],
+        hasNoAlerts: false,
+      };
+    }
+
+    projectGroups[key].items.push(notification);
+    projectGroups[key].hasNoAlerts = false;
+  });
+
+  return Object.values(projectGroups)
+    .map((group) => ({
+      ...group,
+      items: group.items.sort((a, b) => {
+        const priorityDiff =
+          PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
+
+        if (priorityDiff !== 0) return priorityDiff;
+
+        return b.timestamp.getTime() - a.timestamp.getTime();
+      }),
+    }))
+    .sort((a, b) => {
+      if (a.projectName === 'Global Notifications') return 1;
+      if (b.projectName === 'Global Notifications') return -1;
+
+      // Projects with alerts appear first
+      if (a.items.length > 0 && b.items.length === 0) return -1;
+      if (a.items.length === 0 && b.items.length > 0) return 1;
+
+      // If both have alerts, sort by priority
+      if (a.items.length > 0 && b.items.length > 0) {
+        const aTop = a.items[0];
+        const bTop = b.items[0];
+
+        const priorityDiff =
+          PRIORITY_ORDER[aTop.priority] - PRIORITY_ORDER[bTop.priority];
+
+        if (priorityDiff !== 0) return priorityDiff;
+
+        return bTop.timestamp.getTime() - aTop.timestamp.getTime();
       }
-    > = {};
 
-    filteredNotifications.forEach((notification) => {
-      const key = String(notification.projectId || 'global');
-
-      if (!projectGroups[key]) {
-        projectGroups[key] = {
-          projectId: key,
-          projectName: notification.projectName || 'Global Notifications',
-          items: [],
-        };
-      }
-
-      projectGroups[key].items.push(notification);
+      // If both have no alerts, sort alphabetically
+      return a.projectName.localeCompare(b.projectName);
     });
-
-    return Object.values(projectGroups)
-      .map((group) => ({
-        ...group,
-        items: group.items.sort((a, b) => {
-          const priorityDiff =
-            PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
-
-          if (priorityDiff !== 0) return priorityDiff;
-
-          return b.timestamp.getTime() - a.timestamp.getTime();
-        }),
-      }))
-      .sort((a, b) => {
-        if (a.projectName === 'Global Notifications') return 1;
-        if (b.projectName === 'Global Notifications') return -1;
-
-        return a.projectName.localeCompare(b.projectName);
-      });
-  }, [filteredNotifications]);
+}, [filteredNotifications, allProjects]);
 
   const unreadCount = notifications.filter((item) => !item.read).length;
 
   const projectCount = useMemo(() => {
-    return new Set(
-      notifications
-        .filter(
-          (item) => item.projectId !== 'global' && item.projectId !== 'all'
-        )
-        .map((item) => item.projectId)
-    ).size;
-  }, [notifications]);
+  return allProjects.length;
+}, [allProjects]);
 
   const handleMarkAsRead = (id: string, event: React.MouseEvent) => {
     event.stopPropagation();
@@ -1273,85 +1416,91 @@ export function NotificationCenter({
                     </div>
 
                     <div className="flex flex-col">
-                      {projectGroup.items.map((notification) => (
-                        <div
-                          key={notification.id}
-                          onClick={() => handleNotificationClick(notification)}
-                          className={`group relative p-4 flex gap-4 border-b border-slate-100 dark:border-slate-800/60 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/80 cursor-pointer transition-colors ${
-                            !notification.read
-                              ? 'bg-blue-50/50 dark:bg-blue-900/10'
-                              : ''
-                          }`}
-                        >
-                          <div
-                            className={`mt-0.5 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                              PRIORITY_COLORS[notification.priority]?.bg || ''
-                            } ${
-                              PRIORITY_COLORS[notification.priority]?.text || ''
-                            }`}
-                          >
-                            {PRIORITY_COLORS[notification.priority]?.icon}
-                          </div>
+  {projectGroup.items.length === 0 ? (
+    <div className="p-4 text-[13px] text-slate-500 dark:text-slate-400 bg-white dark:bg-[#1E293B] border-b border-slate-100 dark:border-slate-800/60">
+      No active alerts for this project.
+    </div>
+  ) : (
+    projectGroup.items.map((notification) => (
+      <div
+        key={notification.id}
+        onClick={() => handleNotificationClick(notification)}
+        className={`group relative p-4 flex gap-4 border-b border-slate-100 dark:border-slate-800/60 last:border-0 hover:bg-slate-50 dark:hover:bg-slate-800/80 cursor-pointer transition-colors ${
+          !notification.read
+            ? 'bg-blue-50/50 dark:bg-blue-900/10'
+            : ''
+        }`}
+      >
+        <div
+          className={`mt-0.5 flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+            PRIORITY_COLORS[notification.priority]?.bg || ''
+          } ${
+            PRIORITY_COLORS[notification.priority]?.text || ''
+          }`}
+        >
+          {PRIORITY_COLORS[notification.priority]?.icon}
+        </div>
 
-                          <div className="flex-1 min-w-0 pr-6">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-                                {notification.priority}
-                              </span>
+        <div className="flex-1 min-w-0 pr-6">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[11px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+              {notification.priority}
+            </span>
 
-                              <span className="text-[11px] text-slate-400 dark:text-slate-500">
-                                •
-                              </span>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+              •
+            </span>
 
-                              <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                                {notification.module
-                                  ? notification.module.charAt(0).toUpperCase() +
-                                    notification.module.slice(1)
-                                  : 'Unknown'}
-                              </span>
-                            </div>
+            <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              {notification.module
+                ? notification.module.charAt(0).toUpperCase() +
+                  notification.module.slice(1)
+                : 'Unknown'}
+            </span>
+          </div>
 
-                            <p
-                              className={`text-[14px] leading-tight mb-1.5 ${
-                                !notification.read
-                                  ? 'font-semibold text-slate-800 dark:text-slate-100'
-                                  : 'text-slate-600 dark:text-slate-300'
-                              }`}
-                            >
-                              {notification.summary}
-                            </p>
+          <p
+            className={`text-[14px] leading-tight mb-1.5 ${
+              !notification.read
+                ? 'font-semibold text-slate-800 dark:text-slate-100'
+                : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            {notification.summary}
+          </p>
 
-                            <div className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                              {formatDistanceToNow(notification.timestamp, {
-                                addSuffix: true,
-                              })}
-                            </div>
-                          </div>
+          <div className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+            {formatDistanceToNow(notification.timestamp, {
+              addSuffix: true,
+            })}
+          </div>
+        </div>
 
-                          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {!notification.read && (
-                              <button
-                                onClick={(event) =>
-                                  handleMarkAsRead(notification.id, event)
-                                }
-                                title="Mark as read"
-                                className="w-7 h-7 rounded-full bg-white dark:bg-slate-700 shadow-sm border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
-                              >
-                                <Check size={14} strokeWidth={2.5} />
-                              </button>
-                            )}
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          {!notification.read && (
+            <button
+              onClick={(event) =>
+                handleMarkAsRead(notification.id, event)
+              }
+              title="Mark as read"
+              className="w-7 h-7 rounded-full bg-white dark:bg-slate-700 shadow-sm border border-slate-200 dark:border-slate-600 flex items-center justify-center text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors"
+            >
+              <Check size={14} strokeWidth={2.5} />
+            </button>
+          )}
 
-                            <div className="w-7 h-7 rounded-full bg-blue-50 dark:bg-slate-700 flex items-center justify-center text-blue-600 dark:text-blue-400 shadow-sm border border-blue-100 dark:border-slate-600">
-                              <ChevronRight size={14} strokeWidth={2.5} />
-                            </div>
-                          </div>
+          <div className="w-7 h-7 rounded-full bg-blue-50 dark:bg-slate-700 flex items-center justify-center text-blue-600 dark:text-blue-400 shadow-sm border border-blue-100 dark:border-slate-600">
+            <ChevronRight size={14} strokeWidth={2.5} />
+          </div>
+        </div>
 
-                          {!notification.read && (
-                            <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-blue-500 rounded-full group-hover:opacity-0 transition-opacity" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
+        {!notification.read && (
+          <div className="absolute left-1.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 bg-blue-500 rounded-full group-hover:opacity-0 transition-opacity" />
+        )}
+      </div>
+    ))
+  )}
+</div>
                   </div>
                 ))
               )}
