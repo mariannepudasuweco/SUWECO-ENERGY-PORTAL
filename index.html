@@ -7910,8 +7910,10 @@ window.generatePrsNo = async function() {
     document.getElementById('newPrsModal')?.classList.add('active');
 };
 
-        window.deletePrsRecord = async function(id) {
-    const confirmDelete = confirm('Delete this PRS record?');
+window.deletePrsRecord = async function(id) {
+    const confirmDelete = confirm(
+        'Delete this PRS record? Linked Manila/Local records will also be deleted.'
+    );
 
     if (!confirmDelete) return;
 
@@ -7921,39 +7923,107 @@ window.generatePrsNo = async function() {
         return;
     }
 
-    console.log('DELETING PRS:', id);
+    const prsId = String(id);
 
-    const { error } = await window.supabase
+    console.log('DELETING PRS AND LINKED PROCUREMENT RECORDS:', prsId);
+
+    // 1. Delete linked Manila records first
+    const { error: manilaDeleteError } = await window.supabase
+        .from('manila_procurement')
+        .delete()
+        .eq('request_id', prsId);
+
+    console.log('DELETE LINKED MANILA ERROR:', manilaDeleteError);
+
+    if (manilaDeleteError) {
+        console.error(manilaDeleteError);
+        window.showToast?.('Failed to delete linked Manila record.', 'error');
+        return;
+    }
+
+    // 2. Delete linked Local records first
+    const { error: localDeleteError } = await window.supabase
+        .from('local_procurement')
+        .delete()
+        .eq('request_id', prsId);
+
+    console.log('DELETE LINKED LOCAL ERROR:', localDeleteError);
+
+    if (localDeleteError) {
+        console.error(localDeleteError);
+        window.showToast?.('Failed to delete linked Local record.', 'error');
+        return;
+    }
+
+    // 3. Delete the PRS itself
+    const { error: prsDeleteError } = await window.supabase
         .from('procurement_requests')
         .delete()
-        .eq('id', id);
+        .eq('id', prsId);
 
-    console.log('DELETE PRS ERROR:', error);
+    console.log('DELETE PRS ERROR:', prsDeleteError);
 
-    if (error) {
-        console.error(error);
+    if (prsDeleteError) {
+        console.error(prsDeleteError);
         window.showToast?.('Failed to delete PRS. Check console.', 'error');
         return;
     }
 
-    prsRecords = prsRecords.filter(r => String(r.id) !== String(id));
+    // 4. Update local memory arrays
+    prsRecords = (prsRecords || []).filter(
+        r => String(r.id) !== prsId
+    );
+
+    manilaRecords = (manilaRecords || []).filter(
+        m => String(m.prsId || m.request_id) !== prsId
+    );
+
+    localRecords = (localRecords || []).filter(
+        l => String(l.prsId || l.request_id) !== prsId
+    );
+
     window.prsRecords = prsRecords;
+    window.manilaRecords = manilaRecords;
+    window.localRecords = localRecords;
 
-    manilaRecords = manilaRecords.filter(m => String(m.prsId) !== String(id));
-    localRecords = localRecords.filter(l => String(l.prsId) !== String(id));
-
+    // 5. Force reload next time
     window.__requestLoadedProjectId = null;
+    window.__manilaLoadedProjectId = null;
+    window.__localLoadedProjectId = null;
     window.__procurementDashboardLoadedProjectId = null;
     window.__fullProcurementDashboardLoadedProjectId = null;
 
-    window.dispatchEvent(new CustomEvent('procurementRequestsUpdated'));
-    window.dispatchEvent(new CustomEvent('procurementModuleUpdated'));
+    // 6. Reload from Supabase if loaders exist
+    if (typeof window.loadProcurementRequestsFromSupabase === 'function') {
+        await window.loadProcurementRequestsFromSupabase();
+    }
 
-    if (currentView === 'request') {
+    if (typeof window.loadManilaProcurementFromSupabase === 'function') {
+        await window.loadManilaProcurementFromSupabase();
+    }
+
+    if (typeof window.loadLocalProcurementFromSupabase === 'function') {
+        await window.loadLocalProcurementFromSupabase();
+    }
+
+    // 7. Re-render current page
+    if (currentView === 'request' && typeof renderRequestView === 'function') {
         renderRequestView();
     }
 
-    window.showToast?.('PRS deleted successfully.', 'success');
+    if (currentView === 'manila' && typeof renderManilaView === 'function') {
+        renderManilaView();
+    }
+
+    if (currentView === 'local' && typeof renderLocalView === 'function') {
+        renderLocalView();
+    }
+
+    window.dispatchEvent(new CustomEvent('procurementRequestsUpdated'));
+    window.dispatchEvent(new CustomEvent('procurementUpdated'));
+    window.dispatchEvent(new CustomEvent('procurementModuleUpdated'));
+
+    window.showToast?.('PRS and linked procurement records deleted successfully.', 'success');
 };
 
         window.openPrsModal = (id = null) => {
