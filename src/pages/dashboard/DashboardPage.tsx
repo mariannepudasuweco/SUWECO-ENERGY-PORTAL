@@ -133,11 +133,11 @@ export default function DashboardPage() {
 
   const getStatusColor = (status: string) => {
     switch(status) {
+      case 'In Bidding': return 'bg-blue-100 text-blue-700';
       case 'Ongoing': return 'bg-emerald-100 text-emerald-700';
       case 'Awarded': return 'bg-orange-100 text-orange-600';
       case 'On Hold': return 'bg-amber-100 text-amber-600';
       case 'Completed': return 'bg-emerald-100 text-emerald-700';
-      case 'In Bidding': return 'bg-blue-100 text-blue-700';
       case 'Cancelled': return 'bg-rose-100 text-rose-700';
       default: return 'bg-gray-100 text-gray-700';
     }
@@ -196,8 +196,8 @@ export default function DashboardPage() {
     }
   }
 
-  const ongoingCount = projectsList.filter(p => p.status === 'Ongoing').length;
   const biddingCount = projectsList.filter(p => p.status === 'In Bidding').length;
+  const ongoingCount = projectsList.filter(p => p.status === 'Ongoing').length;
   const completedCount = projectsList.filter(p => p.status === 'Completed').length;
   
   const todayStr = new Date().toISOString().split('T')[0];
@@ -205,8 +205,8 @@ export default function DashboardPage() {
 
   const filteredProjects = projectsList.filter(p => {
     if (activeTab === 'All') return true;
-    if (activeTab === 'Ongoing') return p.status === 'Ongoing';
     if (activeTab === 'Bidding') return p.status === 'In Bidding';
+    if (activeTab === 'Ongoing') return p.status === 'Ongoing';
     if (activeTab === 'Completed') return p.status === 'Completed';
     if (activeTab === 'On Hold / Cancelled') return ['On Hold', 'Cancelled'].includes(p.status);
     return true;
@@ -238,8 +238,8 @@ export default function DashboardPage() {
               <Folder size={20} strokeWidth={2.5} />
             </div>
             <div>
-              <h3 className="font-medium text-slate-500 text-[13px] mb-0.5">Ongoing Projects</h3>
-              <div className="text-[22px] leading-none font-bold text-slate-800">{ongoingCount}</div>
+              <h3 className="font-medium text-slate-500 text-[13px] mb-0.5">Projects in Bidding</h3>
+              <div className="text-[22px] leading-none font-bold text-slate-800">{biddingCount}</div>
             </div>
           </div>
 
@@ -248,8 +248,8 @@ export default function DashboardPage() {
               <Clock size={20} strokeWidth={2.5} />
             </div>
             <div>
-              <h3 className="font-medium text-slate-500 text-[13px] mb-0.5">Projects in Bidding</h3>
-              <div className="text-[22px] leading-none font-bold text-slate-800">{biddingCount}</div>
+              <h3 className="font-medium text-slate-500 text-[13px] mb-0.5">Ongoing Projects</h3>
+              <div className="text-[22px] leading-none font-bold text-slate-800">{ongoingCount}</div>
             </div>
           </div>
 
@@ -296,7 +296,7 @@ export default function DashboardPage() {
 
           <div className="px-6 py-4 flex items-center border-b border-slate-100 overflow-x-auto no-scrollbar">
             <div className="flex gap-2 min-w-max">
-              {['All', 'Ongoing', 'Bidding', 'Completed', 'On Hold / Cancelled'].map(tab => (
+              {['All', 'Bidding','Ongoing', 'Completed', 'On Hold / Cancelled'].map(tab => (
                 <button 
                   key={tab}
                   className={`px-4 py-1.5 rounded-full text-[13px] font-semibold transition-colors ${
@@ -460,7 +460,7 @@ export default function DashboardPage() {
           style={{ top: dropdownPos.top, left: dropdownPos.left }}
           onClick={e => e.stopPropagation()}
         >
-          {['Ongoing', 'In Bidding', 'Completed', 'On Hold', 'Cancelled'].map(status => {
+          {['In Bidding', 'Ongoing', 'Completed', 'On Hold', 'Cancelled'].map(status => {
             const project = projectsList.find(p => p.id === openStatusDropdown);
             const isActive = project?.status === status;
             
