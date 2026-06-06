@@ -12104,12 +12104,19 @@ if (localForm) {
         };
 
         window.openNewMaterialModal = function(id = null) {
-    window.editingMaterialId = id ? String(id) : null;
-
     const isEdit = !!id;
+
     const existingRecord = isEdit
         ? materialsMasterlist.find(item => String(item.id) === String(id))
         : null;
+
+    if (isEdit) {
+        if (!window.legacyGuardEdit('materials', existingRecord)) return;
+    } else {
+        if (!window.legacyGuardAdd('materials')) return;
+    }
+
+    window.editingMaterialId = id ? String(id) : null;
 
     const selectedDept = existingRecord?.department || 'Civil';
 
@@ -12238,7 +12245,17 @@ window.saveMaterialToSupabase = async function() {
 
     const materialEditId = window.editingMaterialId || null;
 
-    let result;
+const existingMaterialForAccess = materialEditId
+    ? materialsMasterlist.find(item => String(item.id) === String(materialEditId))
+    : null;
+
+if (materialEditId) {
+    if (!window.legacyGuardEdit('materials', existingMaterialForAccess)) return;
+} else {
+    if (!window.legacyGuardAdd('materials')) return;
+}
+
+let result;
 
     if (materialEditId) {
         result = await window.supabase
@@ -12284,6 +12301,12 @@ window.saveMaterialToSupabase = async function() {
 };
 
 window.deleteMaterialRecord = function(id) {
+    const existingMaterialForAccess = materialsMasterlist.find(
+        item => String(item.id) === String(id)
+    );
+
+    if (!window.legacyGuardDelete('materials', existingMaterialForAccess)) return;
+
     customConfirm('Are you sure you want to delete this material?', async () => {
         if (!window.supabase) {
             window.showToast?.('Supabase is not connected.', 'error');
@@ -12303,9 +12326,11 @@ window.deleteMaterialRecord = function(id) {
             return;
         }
 
-        materialsMasterlist = materialsMasterlist.filter(item => String(item.id) !== String(id));
-        window.materialsMasterlist = materialsMasterlist;
+        materialsMasterlist = materialsMasterlist.filter(
+            item => String(item.id) !== String(id)
+        );
 
+        window.materialsMasterlist = materialsMasterlist;
         window.__materialsLoadedProjectId = null;
 
         if (typeof window.loadMaterialsMasterlistFromSupabase === 'function') {
@@ -12322,14 +12347,25 @@ window.deleteMaterialRecord = function(id) {
 
 
 
-        window.openNewTransactionModal = async function(id = null) {
+window.openNewTransactionModal = async function(id = null) {
+    const isEdit = !!id;
+
+    const existingTransactionForAccess = isEdit
+        ? materialsTransactions.find(t => String(t.id) === String(id))
+        : null;
+
+    if (isEdit) {
+        if (!window.legacyGuardEdit('materials', existingTransactionForAccess)) return;
+    } else {
+        if (!window.legacyGuardAdd('materials')) return;
+    }
+
     window.editingMaterialTransactionId = id ? String(id) : null;
 
     if (typeof window.loadProcurementRequestsFromSupabase === 'function') {
         await window.loadProcurementRequestsFromSupabase();
     }
 
-    const isEdit = !!id;
     const existingRecord = isEdit
         ? materialsTransactions.find(t => String(t.id) === String(id))
         : null;
@@ -12574,7 +12610,17 @@ window.saveMaterialTransactionToSupabase = async function() {
 
     const transactionEditId = window.editingMaterialTransactionId || null;
 
-    const oldTransaction = transactionEditId
+const existingTransactionForAccess = transactionEditId
+    ? materialsTransactions.find(t => String(t.id) === String(transactionEditId))
+    : null;
+
+if (transactionEditId) {
+    if (!window.legacyGuardEdit('materials', existingTransactionForAccess)) return;
+} else {
+    if (!window.legacyGuardAdd('materials')) return;
+}
+
+const oldTransaction = transactionEditId
         ? materialsTransactions.find(t => String(t.id) === String(transactionEditId))
         : null;
 
@@ -12734,13 +12780,17 @@ window.saveMaterialTransactionToSupabase = async function() {
 };
 
 window.deleteMaterialTransaction = function(id) {
+    const transaction = materialsTransactions.find(
+        t => String(t.id) === String(id)
+    );
+
+    if (!window.legacyGuardDelete('materials', transaction)) return;
+
     customConfirm('Are you sure you want to delete this transaction?', async () => {
         if (!window.supabase) {
             window.showToast?.('Supabase is not connected.', 'error');
             return;
         }
-
-        const transaction = materialsTransactions.find(t => String(t.id) === String(id));
 
         const { error } = await window.supabase
             .from('materials_transactions')
@@ -12756,7 +12806,9 @@ window.deleteMaterialTransaction = function(id) {
         }
 
         if (transaction) {
-            const material = materialsMasterlist.find(m => String(m.id) === String(transaction.materialId));
+            const material = materialsMasterlist.find(
+                m => String(m.id) === String(transaction.materialId)
+            );
 
             if (material) {
                 const stockEffect = transaction.transactionType === 'IN'
@@ -12780,9 +12832,11 @@ window.deleteMaterialTransaction = function(id) {
             }
         }
 
-        materialsTransactions = materialsTransactions.filter(t => String(t.id) !== String(id));
-        window.materialsTransactions = materialsTransactions;
+        materialsTransactions = materialsTransactions.filter(
+            t => String(t.id) !== String(id)
+        );
 
+        window.materialsTransactions = materialsTransactions;
         window.__materialsLoadedProjectId = null;
 
         await window.loadMaterialsMasterlistFromSupabase();
