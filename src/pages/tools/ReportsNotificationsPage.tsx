@@ -17,6 +17,7 @@ import {
   Lock,
 } from "lucide-react";
 import { PageContainer } from "../../components/layout/PageContainer";
+import { useAccess } from "../../lib/accessControl";
 
 type ReportScope = "page" | "module" | "merged" | string;
 
@@ -81,6 +82,7 @@ const isValidEmail = (email: string) => {
 };
 
 export default function ReportsNotificationsPage() {
+  const { user, hasPermission, canDeleteRow, canEditRow } = useAccess();
   const [reports, setReports] = useState<GeneratedReport[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);
@@ -298,6 +300,10 @@ export default function ReportsNotificationsPage() {
   };
 
   const deleteReport = async (report: GeneratedReport) => {
+    if (!canDeleteRow("reports-notifications", report)) {
+      alert("You are not allowed to delete this report.");
+      return;
+    }
     const confirmDelete = confirm(
       `Delete this report?\n\n${report.report_title}`
     );
@@ -328,6 +334,10 @@ export default function ReportsNotificationsPage() {
   };
 
   const toggleReportPublicStatus = async (report: GeneratedReport) => {
+    if (!canEditRow("reports-notifications", report)) {
+      alert("You are not allowed to edit this report.");
+      return;
+    }
     const supabase = getSupabase();
 
     if (!supabase) {
@@ -556,7 +566,7 @@ const mergedTitle =
       file_name: `${datePart}-merged-report.html`,
       file_path: null,
       file_url: null,
-      created_by: null,
+      created_by: user?.id || null,
       is_public: false,
       source_report_ids: reportsWithHtml.map((report) => report.id),
     };

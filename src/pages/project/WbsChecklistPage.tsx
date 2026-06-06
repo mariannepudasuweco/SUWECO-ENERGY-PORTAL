@@ -8,12 +8,14 @@ import {
   Plus,
 } from "lucide-react";
 import { originalItems, ChecklistItem } from "../../data/wbsChecklistData";
+import { useAccess } from "../../lib/accessControl";
 
 const initialItems = originalItems;
 
 type DbChecklistItem = ChecklistItem & {
   original_item_id?: string;
   is_manual?: boolean;
+  created_by?: string | null;
 };
 
 const PHASE_COLORS: Record<string, { bg: string; text: string }> = {
@@ -55,6 +57,7 @@ const getStatusColor = (status: string) => {
 };
 
 export default function WbsChecklistPage() {
+  const { user, hasPermission, canEditRow } = useAccess();
   const [dbItems, setDbItems] = useState<DbChecklistItem[]>([]);
   const [overrides, setOverrides] = useState<
     Record<string, Partial<ChecklistItem>>
@@ -106,6 +109,7 @@ export default function WbsChecklistPage() {
     requirement: row.requirement || "Manual Additions",
     section: row.section || "General",
     subsection: row.subsection || "Tasks",
+    created_by: row.created_by || null,
   });
 
   const loadWbsChecklist = async () => {
@@ -320,6 +324,11 @@ if (finalChecked) {
   }, [filteredItems]);
 
   const updateItem = async (id: string, patch: Partial<ChecklistItem>) => {
+    const existingForAccess = items.find((item) => String(item.id) === String(id));
+    if (!canEditRow("wbs-checklist", existingForAccess || {})) {
+      alert("You are not allowed to edit this WBS item.");
+      return;
+    }
     const supabase = getSupabase();
     const activeProjectId = getActiveProjectId();
 
@@ -366,6 +375,7 @@ if (finalChecked) {
       subsection: existingItem.subsection || "Tasks",
       is_manual: Boolean(existingItem.is_manual),
       updated_at: new Date().toISOString(),
+      created_by: user?.id || undefined,
     };
 
     const { error } = await supabase
@@ -394,11 +404,19 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
     cat?: string,
     task?: string
   ) => {
+    if (!hasPermission("wbs-checklist", "add")) {
+      alert("You are not allowed to add WBS tasks.");
+      return;
+    }
     setAddingTaskUnder({ displayId, phase, cat, task });
     setNewTaskDesc("");
   };
 
   const performAddTask = async () => {
+    if (!hasPermission("wbs-checklist", "add")) {
+      alert("You are not allowed to add WBS tasks.");
+      return;
+    }
     if (!addingTaskUnder || !newTaskDesc.trim()) return;
 
     const supabase = getSupabase();
@@ -433,6 +451,7 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
       subsection: task || "Tasks",
       is_manual: true,
       updated_at: new Date().toISOString(),
+      created_by: user?.id || undefined,
     };
 
     const { error } = await supabase
@@ -502,12 +521,14 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
 
 
         <div className="flex items-center gap-3">
+          {hasPermission("wbs-checklist", "add") && (
           <button
             onClick={() => openAddTaskModal("Project Scope", "")}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-all"
           >
             <Plus className="w-4 h-4" /> Add Task
           </button>
+          )}
         </div>
       </div>
 

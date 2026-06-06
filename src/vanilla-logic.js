@@ -1,4 +1,64 @@
 
+        // ===== Access-control helpers for legacy vanilla pages =====
+        window.__legacyAccessToast = function(message) {
+            if (window.showToast) window.showToast(message, 'error');
+            else alert(message);
+        };
+
+        window.legacyHasPermission = function(pageOrKey, action = 'view') {
+            const access = window.__suwecoAccess;
+            if (!access || typeof access.hasPermission !== 'function') {
+                console.warn('[Access] AccessProvider not ready for', pageOrKey, action);
+                return false;
+            }
+            return access.hasPermission(pageOrKey, action);
+        };
+
+        window.legacyCanAdd = function(pageOrKey) {
+            return window.legacyHasPermission(pageOrKey, 'add');
+        };
+
+        window.legacyCanEdit = function(pageOrKey, row) {
+            const access = window.__suwecoAccess;
+            if (access && typeof access.canEditRow === 'function') {
+                return access.canEditRow(pageOrKey, row || {});
+            }
+            return window.legacyHasPermission(pageOrKey, 'edit');
+        };
+
+        window.legacyCanDelete = function(pageOrKey, row) {
+            const access = window.__suwecoAccess;
+            if (access && typeof access.canDeleteRow === 'function') {
+                return access.canDeleteRow(pageOrKey, row || {});
+            }
+            return window.legacyHasPermission(pageOrKey, 'delete');
+        };
+
+        window.legacyGuardAdd = function(pageOrKey) {
+            if (!window.legacyCanAdd(pageOrKey)) {
+                window.__legacyAccessToast('You are not allowed to add records on this page.');
+                return false;
+            }
+            return true;
+        };
+
+        window.legacyGuardEdit = function(pageOrKey, row) {
+            if (!window.legacyCanEdit(pageOrKey, row || {})) {
+                window.__legacyAccessToast('You are not allowed to edit this record.');
+                return false;
+            }
+            return true;
+        };
+
+        window.legacyGuardDelete = function(pageOrKey, row) {
+            if (!window.legacyCanDelete(pageOrKey, row || {})) {
+                window.__legacyAccessToast('You are not allowed to delete this record.');
+                return false;
+            }
+            return true;
+        };
+
+
         // Mock Data
         window.__cleanupTasks = window.__cleanupTasks || [];
         window.projects = window.projects || [];
@@ -401,6 +461,8 @@
 
         // Modal Management
         window.openProjectModal = (projectId = null) => {
+            const existingProjectForAccess = projectId ? (window.projects || projects || []).find(p => String(p.id) === String(projectId)) : null;
+            if (projectId ? !window.legacyGuardEdit('projects', existingProjectForAccess) : !window.legacyGuardAdd('projects')) return;
             editingProjectId = projectId;
             if (projectId) {
                 document.querySelector('#newProjectModal h2').textContent = 'Edit Project';
@@ -453,6 +515,8 @@
         };
 
         window.deleteProject = function(id) {
+            const existingProjectForAccess = (window.projects || projects || []).find(p => String(p.id) === String(id));
+            if (!window.legacyGuardDelete('projects', existingProjectForAccess)) return;
             customConfirm('Are you sure you want to delete this project?', () => {
                 projects = projects.filter(p => p.id !== id);
                 window.projects = projects;
@@ -3017,6 +3081,7 @@
         };
 
         window.openAddSubtaskModal = function(parentCode) {
+            if (!window.legacyGuardAdd('project-schedule')) return;
             const modalHtml = `
                 <div class="modal-overlay active" id="addSubtaskModal">
                     <div class="modal" style="max-width: 500px;">
@@ -3049,6 +3114,7 @@
         };
 
         window.saveNewSubtask = function(parentCode) {
+            if (!window.legacyGuardAdd('project-schedule')) return;
             const name = document.getElementById('newSubtaskName').value.trim();
             if(!name) return;
             
@@ -3090,6 +3156,8 @@
         };
 
         window.deleteScheduleItem = function(code) {
+            const existingScheduleRow = window.projectSchedules?.[currentProjectId]?.[code] || {};
+            if (!window.legacyGuardDelete('project-schedule', existingScheduleRow)) return;
             customConfirm('Are you sure you want to delete ' + code + ' and all of its subtasks?', () => {
                 if (window.customProjectScheduleTasks && window.customProjectScheduleTasks[currentProjectId]) {
                     window.customProjectScheduleTasks[currentProjectId] = window.customProjectScheduleTasks[currentProjectId].filter(opt => {
@@ -3185,6 +3253,8 @@
         };
 
         window.editScheduleItem = function(code) {
+            const existingScheduleRow = window.projectSchedules?.[currentProjectId]?.[code] || {};
+            if (!window.legacyGuardEdit('project-schedule', existingScheduleRow)) return;
             const data = projectSchedules[currentProjectId][code];
             if (!data) return;
             const currentBudget = (boqBudgets[currentProjectId] && boqBudgets[currentProjectId][code]) || 0;
@@ -4999,6 +5069,8 @@
         };
 
         window.editBoqBudget = function(code, name, currentBudget) {
+            const boqRowForAccess = window.boqBudgetRows?.[window.currentProjectId || currentProjectId]?.[code] || {};
+            if (!window.legacyGuardEdit('boq-charging', boqRowForAccess)) return;
             const modalHtml = `
                 <div class="modal-overlay active" id="editBoqBudgetModal">
                     <div class="modal" style="max-width: 400px;">
@@ -5313,6 +5385,7 @@
         }
 
         window.openPrsModal = () => {
+            if (!window.legacyGuardAdd('request')) return;
             const modalOverlay = document.getElementById('newPrsModal');
             if(modalOverlay) {
                 modalOverlay.classList.add('active');
@@ -5464,6 +5537,8 @@
         };
 
         window.editPrsRecord = function(id) {
+    const accessRecord = (window.prsRecords || prsRecords || []).find(r => String(r.id) === String(id));
+    if (!window.legacyGuardEdit('request', accessRecord)) return;
             openPrsModal(id);
         };
 
@@ -5480,6 +5555,8 @@
         };
 
         window.openPrsModal = (id = null) => {
+            const existingPrsForAccess = id ? (window.prsRecords || prsRecords || []).find(r => String(r.id) === String(id)) : null;
+            if (id ? !window.legacyGuardEdit('request', existingPrsForAccess) : !window.legacyGuardAdd('request')) return;
             editingPrsId = id;
             const modalOverlay = document.getElementById('newPrsModal');
             if(modalOverlay) {
@@ -5811,6 +5888,8 @@
         };
 
         window.deleteManilaRecord = function(id) {
+            const existingManilaForAccess = (window.manilaRecords || manilaRecords || []).find(r => String(r.id) === String(id));
+            if (!window.legacyGuardDelete('manila', existingManilaForAccess)) return;
             customConfirm('Are you sure you want to delete this Manila record?', () => {
                 manilaRecords = manilaRecords.filter(m => m.id !== id);
                 window.manilaRecords = manilaRecords;
@@ -6016,6 +6095,8 @@
         };
 
         window.openManilaModal = function(id = null) {
+            const existingManilaForAccess = id ? (window.manilaRecords || manilaRecords || []).find(r => String(r.id) === String(id)) : null;
+            if (id ? !window.legacyGuardEdit('manila', existingManilaForAccess) : !window.legacyGuardAdd('manila')) return;
             editingManilaId = id;
             const modalOverlay = document.getElementById('manilaModal');
             if(modalOverlay) {
@@ -6284,6 +6365,8 @@
         };
 
         window.deleteLocalRecord = function(id) {
+            const existingLocalForAccess = (window.localRecords || localRecords || []).find(r => String(r.id) === String(id));
+            if (!window.legacyGuardDelete('local', existingLocalForAccess)) return;
             customConfirm('Are you sure you want to delete this Replenishment record?', () => {
                 localRecords = localRecords.filter(m => m.id !== id);
                 window.localRecords = localRecords;
@@ -6518,6 +6601,8 @@
         };
 
         window.openLocalModal = function(id = null) {
+            const existingLocalForAccess = id ? (window.localRecords || localRecords || []).find(r => String(r.id) === String(id)) : null;
+            if (id ? !window.legacyGuardEdit('local', existingLocalForAccess) : !window.legacyGuardAdd('local')) return;
             editingLocalId = id;
             const modalOverlay = document.getElementById('localModal');
             if(modalOverlay) {
@@ -6747,6 +6832,8 @@
         if (localForm) {
             localForm.addEventListener('submit', function(e) {
                 e.preventDefault();
+                const existingLocalForAccess = editingLocalId ? (window.localRecords || localRecords || []).find(r => String(r.id) === String(editingLocalId)) : null;
+                if (editingLocalId ? !window.legacyGuardEdit('local', existingLocalForAccess) : !window.legacyGuardAdd('local')) return;
                 
                 const isStandalone = document.getElementById('localStandaloneToggle').checked;
                 const prsIdVal = document.getElementById('localPrsSelect').value;
@@ -8277,6 +8364,7 @@
         };
 
         window.openNewMaterialModal = function() {
+            if (!window.legacyGuardAdd('materials')) return;
             const deptItems = materialsMasterlist.filter(item => item.department === 'Civil');
             const nextId = deptItems.length + 1;
             const autoItemCode = 'CIV-MAT-' + String(nextId).padStart(4, '0');
@@ -8342,6 +8430,7 @@
         };
 
         window.openNewTransactionModal = function() {
+            if (!window.legacyGuardAdd('materials_transactions')) return;
             const prsOptions = prsRecords.map(prs => `<option value="${prs.prsNo}" data-charging="${prs.activityCharging}">${prs.prsNo}</option>`).join('');
             const itemOptions = materialsMasterlist.map(item => `<option value="${item.itemCode}">${item.itemCode} - ${item.itemName}</option>`).join('');
 
@@ -8875,6 +8964,7 @@
         }
 
         window.openFuelModal = function() {
+            if (!window.legacyGuardAdd('fuel')) return;
             document.getElementById('fuelRecordId').value = '';
             document.getElementById('fuelForm').reset();
             populateEquipmentDropdown();
@@ -8965,6 +9055,8 @@
         };
 
         window.editFuelRecord = function(id) {
+            const accessRecord = (window.fuelRecords || fuelRecords || []).find(r => String(r.id) === String(id));
+            if (!window.legacyGuardEdit('fuel', accessRecord)) return;
             const record = fuelRecords.find(r => r.id == id);
             if (record) {
                 document.getElementById('fuelRecordId').value = record.id;
@@ -8985,6 +9077,8 @@
         }
 
         window.deleteFuelRecord = function(id) {
+            const accessRecord = (window.fuelRecords || fuelRecords || []).find(r => String(r.id) === String(id));
+            if (!window.legacyGuardDelete('fuel', accessRecord)) return;
             customConfirm('Are you sure you want to delete this fuel record?', () => {
                 fuelRecords = fuelRecords.filter(r => r.id != id);
                 window.fuelRecords = fuelRecords;
@@ -9004,6 +9098,9 @@
             document.body.addEventListener('submit', function(e) {
                 if (e.target && e.target.id === 'fuelForm') {
                     e.preventDefault();
+                    const fuelEditIdForAccess = document.getElementById('fuelRecordId')?.value || null;
+                    const existingFuelForAccess = fuelEditIdForAccess ? (window.fuelRecords || fuelRecords || []).find(r => String(r.id) === String(fuelEditIdForAccess)) : null;
+                    if (fuelEditIdForAccess ? !window.legacyGuardEdit('fuel', existingFuelForAccess) : !window.legacyGuardAdd('fuel')) return;
                     
                     const id = document.getElementById('fuelRecordId').value;
                     const date = document.getElementById('fuelDate').value;

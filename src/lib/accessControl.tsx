@@ -341,25 +341,52 @@ import React, {
         return false;
       };
   
+      const sharedEditPermissionKeys = [
+        "project_schedule_tasks",
+        "wbs_checklist_items",
+      ];
+      
       const canEditRow = (
         pageOrKey: AppPage | string,
         row: { created_by?: string | null }
       ) => {
+        // Project Manager can edit everything
         if (isProjectManager(profile?.role)) return true;
-  
+      
+        const permissionKey = getPermissionKey(pageOrKey);
+      
+        // Shared editing pages:
+        // Any role with can_edit = true can edit all rows here
+        if (sharedEditPermissionKeys.includes(permissionKey)) {
+          return hasPermission(pageOrKey, "edit");
+        }
+      
+        // Normal pages:
+        // User can edit only their own created records
         return (
           hasPermission(pageOrKey, "edit") &&
           !!user?.id &&
           row.created_by === user.id
         );
       };
-  
+      
       const canDeleteRow = (
         pageOrKey: AppPage | string,
         row: { created_by?: string | null }
       ) => {
+        // Project Manager can delete everything
         if (isProjectManager(profile?.role)) return true;
-  
+      
+        const permissionKey = getPermissionKey(pageOrKey);
+      
+        // Shared editing pages:
+        // Any role with can_delete = true can delete all rows here
+        if (sharedEditPermissionKeys.includes(permissionKey)) {
+          return hasPermission(pageOrKey, "delete");
+        }
+      
+        // Normal pages:
+        // User can delete only their own created records
         return (
           hasPermission(pageOrKey, "delete") &&
           !!user?.id &&
@@ -381,7 +408,20 @@ import React, {
       };
     }, [user, profile, permissions, loadingAccess, accessError]);
   
-    return (
+  
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      (window as any).__suwecoAccess = value;
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        delete (window as any).__suwecoAccess;
+      }
+    };
+  }, [value]);
+
+  return (
       <AccessContext.Provider value={value}>{children}</AccessContext.Provider>
     );
   }
