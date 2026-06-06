@@ -2,8 +2,8 @@ import React, { useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 type SignupPageProps = {
-    onBackToLogin: () => void;
-  };
+  onBackToLogin: () => void;
+};
 
 export default function SignupPage({ onBackToLogin }: SignupPageProps) {
   const [fullName, setFullName] = useState("");
@@ -18,12 +18,28 @@ export default function SignupPage({ onBackToLogin }: SignupPageProps) {
 
   const handleSignup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+
     setLoading(true);
     setMessage("");
     setErrorMsg("");
 
-    if (!fullName.trim()) {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanFullName = fullName.trim();
+
+    if (!cleanFullName) {
       setErrorMsg("Please enter your full name.");
+      setLoading(false);
+      return;
+    }
+
+    if (!cleanEmail) {
+      setErrorMsg("Please enter your email.");
+      setLoading(false);
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMsg("Password must be at least 6 characters.");
       setLoading(false);
       return;
     }
@@ -34,20 +50,21 @@ export default function SignupPage({ onBackToLogin }: SignupPageProps) {
       return;
     }
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
+    const { error } = await supabase.auth.signUp({
+      email: cleanEmail,
       password,
       options: {
         data: {
-          full_name: fullName,
+          full_name: cleanFullName,
           requested_role: requestedRole,
         },
       },
     });
 
+    setLoading(false);
+
     if (error) {
       setErrorMsg(error.message);
-      setLoading(false);
       return;
     }
 
@@ -60,7 +77,6 @@ export default function SignupPage({ onBackToLogin }: SignupPageProps) {
     setRequestedRole("Warehouseman");
     setPassword("");
     setConfirmPassword("");
-    setLoading(false);
   };
 
   return (

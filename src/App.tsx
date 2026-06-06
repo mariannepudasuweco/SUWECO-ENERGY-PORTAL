@@ -1,84 +1,94 @@
-import React, { useState } from 'react';
-import { MainLayout } from './components/layout/MainLayout';
-import { AppPage, ModuleType } from './types/pages';
-import { pageRegistry } from './config/pageRegistry';
-import HomePage from './pages/HomePage';
+import React, { useState } from "react";
+import { MainLayout } from "./components/layout/MainLayout";
+import { AppPage, ModuleType } from "./types/pages";
+import { pageRegistry } from "./config/pageRegistry";
+import HomePage from "./pages/HomePage";
 import LoginPage from "./pages/LoginPage";
-import { AccessProvider, useAccess } from './lib/accessControl';
-import { supabase } from './lib/supabaseClient';
 import SignupPage from "./pages/SignupPage";
+import { AccessProvider, useAccess } from "./lib/accessControl";
+import { supabase } from "./lib/supabaseClient";
 
 const getModuleForView = (view: string): ModuleType => {
-  const normView = view.replace(/_/g, '-');
+  const normView = view.replace(/_/g, "-");
 
-  if (['boq-charging', 'expense-overview', 'look-ahead', 'bill-of-quantities'].includes(normView)) {
-    return 'budget';
+  if (
+    ["boq-charging", "expense-overview", "look-ahead", "bill-of-quantities"].includes(
+      normView
+    )
+  ) {
+    return "budget";
   }
 
-  if (['procurement-dashboard', 'request', 'manila', 'local', 'materials', 'fuel'].includes(normView)) {
-    return 'procurement';
+  if (
+    ["procurement-dashboard", "request", "manila", "local", "materials", "fuel"].includes(
+      normView
+    )
+  ) {
+    return "procurement";
   }
 
-  if (['payroll-dashboard', 'employee', 'attendance'].includes(normView)) {
-    return 'payroll';
+  if (["payroll-dashboard", "employee", "attendance"].includes(normView)) {
+    return "payroll";
   }
 
   if (
     [
-      'project-schedule',
-      'activity-history',
-      'activity-week-detail',
-      'coordination',
-      'delegation',
-      'task-dashboard',
-      'kanban-board',
-      'deadlines',
-      'task-delegation',
-      'wbs-checklist',
-      'wbs-sequence',
-      'tasks',
+      "project-schedule",
+      "activity-history",
+      "activity-week-detail",
+      "coordination",
+      "delegation",
+      "task-dashboard",
+      "kanban-board",
+      "deadlines",
+      "task-delegation",
+      "wbs-checklist",
+      "wbs-sequence",
+      "tasks",
     ].includes(normView)
   ) {
-    return 'project';
+    return "project";
   }
 
-  if (['ai-meeting-recorder'].includes(normView)) {
-    return 'tools';
+  if (["ai-meeting-recorder"].includes(normView)) {
+    return "tools";
   }
 
-  if (['reports-notifications'].includes(normView)) {
-    return 'reports';
+  if (["reports-notifications"].includes(normView)) {
+    return "reports";
   }
 
   return null;
 };
 
 const normalizePage = (view: string): AppPage => {
-  const normView = view.replace(/_/g, '-');
+  const normView = view.replace(/_/g, "-");
 
-  if (normView === 'project-detail') return 'project-schedule' as AppPage;
-  if (normView === 'email-reports') return 'reports-notifications' as AppPage;
+  if (normView === "project-detail") return "project-schedule" as AppPage;
+  if (normView === "email-reports") return "reports-notifications" as AppPage;
 
   return normView as AppPage;
 };
 
 function MonitoringApp({ onLogout }: { onLogout: () => void }) {
-  const [activePage, setActivePageState] = useState<AppPage>('dashboard');
+  const [activePage, setActivePageState] = useState<AppPage>("dashboard");
   const [activeModule, setActiveModule] = useState<ModuleType>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
-  const [selectedProjectName, setSelectedProjectName] = useState<string>('');
+  const [selectedProjectName, setSelectedProjectName] = useState<string>("");
+
   const { loadingAccess, accessError, profile, hasPermission } = useAccess();
-  const [authMode, setAuthMode] = useState("login");
 
   React.useEffect(() => {
     const syncSelectedProject = (projectId?: string | null) => {
       setSelectedProjectId(projectId || null);
 
       if (projectId && (window as any).projects) {
-        const project = (window as any).projects.find((p: any) => p.id === projectId);
-        setSelectedProjectName(project?.title || project?.name || '');
+        const project = (window as any).projects.find(
+          (p: any) => p.id === projectId
+        );
+        setSelectedProjectName(project?.title || project?.name || "");
       } else {
-        setSelectedProjectName('');
+        setSelectedProjectName("");
       }
     };
 
@@ -88,9 +98,9 @@ function MonitoringApp({ onLogout }: { onLogout: () => void }) {
       const targetPage = normalizePage(view);
       const module = getModuleForView(targetPage);
 
-      if (!hasPermission(targetPage, 'view')) {
+      if (!hasPermission(targetPage, "view")) {
         setActiveModule(null);
-        setActivePageState('dashboard');
+        setActivePageState("dashboard");
         return;
       }
 
@@ -101,8 +111,8 @@ function MonitoringApp({ onLogout }: { onLogout: () => void }) {
     (window as any).__syncReactState = changePage;
     (window as any).navigateToPage = changePage;
 
-    const legacy = document.getElementById('legacy-vanilla-modals');
-    if (legacy) legacy.style.display = 'block';
+    const legacy = document.getElementById("legacy-vanilla-modals");
+    if (legacy) legacy.style.display = "block";
 
     return () => {
       delete (window as any).__syncReactState;
@@ -111,9 +121,9 @@ function MonitoringApp({ onLogout }: { onLogout: () => void }) {
   }, [hasPermission]);
 
   const setActivePage = (page: AppPage) => {
-    if (!hasPermission(page, 'view')) {
+    if (!hasPermission(page, "view")) {
       setActiveModule(null);
-      setActivePageState('dashboard');
+      setActivePageState("dashboard");
       return;
     }
 
@@ -124,14 +134,14 @@ function MonitoringApp({ onLogout }: { onLogout: () => void }) {
   };
 
   const toggleProjectSelector = () => {
-    if (typeof (window as any).renderProjectsView === 'function') {
+    if (typeof (window as any).renderProjectsView === "function") {
       (window as any).renderProjectsView();
     }
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    sessionStorage.removeItem('isAuthenticated');
+    sessionStorage.removeItem("isAuthenticated");
     onLogout();
   };
 
@@ -148,7 +158,11 @@ function MonitoringApp({ onLogout }: { onLogout: () => void }) {
       <div className="min-h-screen bg-[#1b2d48] flex items-center justify-center p-6 text-white">
         <div className="max-w-md rounded-2xl bg-white/10 border border-white/10 p-6 text-center">
           <h1 className="text-xl font-bold mb-3">Access not available</h1>
-          <p className="text-sm text-white/80 mb-5">{accessError || 'No active profile found.'}</p>
+
+          <p className="text-sm text-white/80 mb-5">
+            {accessError || "No active profile found."}
+          </p>
+
           <button
             onClick={handleLogout}
             className="px-4 py-2 rounded-lg bg-[#f5a623] hover:bg-[#e09510] text-white font-semibold"
@@ -184,15 +198,22 @@ function MonitoringApp({ onLogout }: { onLogout: () => void }) {
 
 export default function App() {
   const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(
-    sessionStorage.getItem('isAuthenticated') === 'true'
+    sessionStorage.getItem("isAuthenticated") === "true"
   );
 
-  const isMonitoring = window.location.pathname.startsWith('/monitoring');
+  const isMonitoring = window.location.pathname.startsWith("/monitoring");
 
   const handleLogin = () => {
-    sessionStorage.setItem('isAuthenticated', 'true');
+    sessionStorage.setItem("isAuthenticated", "true");
     setIsAuthenticated(true);
+  };
+
+  const handleLogout = () => {
+    sessionStorage.removeItem("isAuthenticated");
+    setIsAuthenticated(false);
+    setAuthMode("login");
   };
 
   if (!isMonitoring) {
@@ -203,7 +224,7 @@ export default function App() {
     if (authMode === "signup") {
       return <SignupPage onBackToLogin={() => setAuthMode("login")} />;
     }
-  
+
     return (
       <LoginPage
         onLogin={handleLogin}
@@ -211,4 +232,10 @@ export default function App() {
       />
     );
   }
+
+  return (
+    <AccessProvider>
+      <MonitoringApp onLogout={handleLogout} />
+    </AccessProvider>
+  );
 }
