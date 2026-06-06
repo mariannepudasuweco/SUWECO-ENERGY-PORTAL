@@ -799,6 +799,66 @@
 
     <script>
 
+        // ===== Access-control helpers for legacy vanilla pages =====
+        window.__legacyAccessToast = function(message) {
+            if (window.showToast) window.showToast(message, 'error');
+            else alert(message);
+        };
+
+        window.legacyHasPermission = function(pageOrKey, action = 'view') {
+            const access = window.__suwecoAccess;
+            if (!access || typeof access.hasPermission !== 'function') {
+                console.warn('[Access] AccessProvider not ready for', pageOrKey, action);
+                return false;
+            }
+            return access.hasPermission(pageOrKey, action);
+        };
+
+        window.legacyCanAdd = function(pageOrKey) {
+            return window.legacyHasPermission(pageOrKey, 'add');
+        };
+
+        window.legacyCanEdit = function(pageOrKey, row) {
+            const access = window.__suwecoAccess;
+            if (access && typeof access.canEditRow === 'function') {
+                return access.canEditRow(pageOrKey, row || {});
+            }
+            return window.legacyHasPermission(pageOrKey, 'edit');
+        };
+
+        window.legacyCanDelete = function(pageOrKey, row) {
+            const access = window.__suwecoAccess;
+            if (access && typeof access.canDeleteRow === 'function') {
+                return access.canDeleteRow(pageOrKey, row || {});
+            }
+            return window.legacyHasPermission(pageOrKey, 'delete');
+        };
+
+        window.legacyGuardAdd = function(pageOrKey) {
+            if (!window.legacyCanAdd(pageOrKey)) {
+                window.__legacyAccessToast('You are not allowed to add records on this page.');
+                return false;
+            }
+            return true;
+        };
+
+        window.legacyGuardEdit = function(pageOrKey, row) {
+            if (!window.legacyCanEdit(pageOrKey, row || {})) {
+                window.__legacyAccessToast('You are not allowed to edit this record.');
+                return false;
+            }
+            return true;
+        };
+
+        window.legacyGuardDelete = function(pageOrKey, row) {
+            if (!window.legacyCanDelete(pageOrKey, row || {})) {
+                window.__legacyAccessToast('You are not allowed to delete this record.');
+                return false;
+            }
+            return true;
+        };
+
+
         window.bindFuelFormSubmit = function() {
     const fuelForm = document.getElementById('fuelForm');
 
@@ -826,6 +886,8 @@
         }
 
         const fuelEditId = document.getElementById('fuelRecordId')?.value || null;
+        const existingFuelForAccess = fuelEditId ? (window.fuelRecords || fuelRecords || []).find(r => String(r.id) === String(fuelEditId)) : null;
+        if (fuelEditId ? !window.legacyGuardEdit('fuel', existingFuelForAccess) : !window.legacyGuardAdd('fuel')) return;
 
         const qtyIn = Number(document.getElementById('fuelQtyIn')?.value || 0);
         const qtyOut = Number(document.getElementById('fuelQtyOut')?.value || 0);
@@ -1380,6 +1442,8 @@ window.renderProjectView = function(projectId) {
 
         // Modal Management
         window.openProjectModal = (projectId = null) => {
+            const existingProjectForAccess = projectId ? (window.projects || projects || []).find(p => String(p.id) === String(projectId)) : null;
+            if (projectId ? !window.legacyGuardEdit('projects', existingProjectForAccess) : !window.legacyGuardAdd('projects')) return;
             editingProjectId = projectId ? String(projectId) : null;
             if (projectId) {
                 document.querySelector('#newProjectModal h2').textContent = 'Edit Project';
@@ -1434,6 +1498,8 @@ window.renderProjectView = function(projectId) {
         };
 
         window.deleteProject = function(id) {
+            const existingProjectForAccess = (window.projects || projects || []).find(p => String(p.id) === String(id));
+            if (!window.legacyGuardDelete('projects', existingProjectForAccess)) return;
             customConfirm('Are you sure you want to delete this project?', () => {
                 projects = projects.filter(p => String(p.id) !== String(id));
                 window.projects = projects;
@@ -4371,6 +4437,7 @@ const budgetUtilizationPct =
         };
 
         window.openAddSubtaskModal = function(parentCode) {
+            if (!window.legacyGuardAdd('project-schedule')) return;
             const modalHtml = `
                 <div class="modal-overlay active" id="addSubtaskModal">
                     <div class="modal" style="max-width: 500px;">
@@ -4403,6 +4470,7 @@ const budgetUtilizationPct =
         };
 
         window.saveNewSubtask = async function(parentCode) {
+            if (!window.legacyGuardAdd('project-schedule')) return;
     const activeProjectId = window.currentProjectId || currentProjectId;
 
     if (!activeProjectId) {
@@ -4506,6 +4574,8 @@ const budgetUtilizationPct =
 };
 
         window.deleteScheduleItem = function(code) {
+            const existingScheduleRow = window.projectSchedules?.[currentProjectId]?.[code] || {};
+            if (!window.legacyGuardDelete('project-schedule', existingScheduleRow)) return;
             const activeProjectId = window.currentProjectId || currentProjectId;
             customConfirm('Are you sure you want to delete ' + code + ' and all of its subtasks?', () => {
                 if (window.customProjectScheduleTasks && window.customProjectScheduleTasks[activeProjectId]) {
@@ -4598,6 +4668,8 @@ const budgetUtilizationPct =
         };
 
         window.editScheduleItem = function(code) {
+            const existingScheduleRow = window.projectSchedules?.[currentProjectId]?.[code] || {};
+            if (!window.legacyGuardEdit('project-schedule', existingScheduleRow)) return;
     const activeProjectId = window.currentProjectId || currentProjectId;
 
     if (!activeProjectId) {
@@ -6985,6 +7057,8 @@ ${currentBoqTab === 'All' ? `
         };
 
         window.editBoqBudget = function(code, name, currentBudget) {
+            const boqRowForAccess = window.boqBudgetRows?.[window.currentProjectId || currentProjectId]?.[code] || {};
+            if (!window.legacyGuardEdit('boq-charging', boqRowForAccess)) return;
     const existingModal = document.getElementById('boqBudgetModal');
     if (existingModal) existingModal.remove();
 
@@ -7619,6 +7693,7 @@ window.getBoqInfoFromCharging = function(charging) {
         }
 
         window.openPrsModal = () => {
+            if (!window.legacyGuardAdd('request')) return;
             const modalOverlay = document.getElementById('newPrsModal');
             if(modalOverlay) {
                 modalOverlay.classList.add('active');
@@ -7880,6 +7955,8 @@ window.generatePrsNo = async function() {
         };
 
         window.editPrsRecord = function(id) {
+    const accessRecord = (window.prsRecords || prsRecords || []).find(r => String(r.id) === String(id));
+    if (!window.legacyGuardEdit('request', accessRecord)) return;
     const record = prsRecords.find(r => String(r.id) === String(id));
 
     if (!record) {
@@ -7911,6 +7988,8 @@ window.generatePrsNo = async function() {
 };
 
 window.deletePrsRecord = async function(id) {
+    const accessRecord = (window.prsRecords || prsRecords || []).find(r => String(r.id) === String(id));
+    if (!window.legacyGuardDelete('request', accessRecord)) return;
     const confirmDelete = confirm(
         'Delete this PRS record? Linked Manila/Local records will also be deleted.'
     );
@@ -8027,6 +8106,8 @@ window.deletePrsRecord = async function(id) {
 };
 
         window.openPrsModal = (id = null) => {
+            const existingPrsForAccess = id ? (window.prsRecords || prsRecords || []).find(r => String(r.id) === String(id)) : null;
+            if (id ? !window.legacyGuardEdit('request', existingPrsForAccess) : !window.legacyGuardAdd('request')) return;
     editingPrsId = id;
 
     const modalOverlay = document.getElementById('newPrsModal');
@@ -8323,7 +8404,8 @@ window.loadProjectScheduleFromSupabase = async function() {
             computedProgress: Number(row.computed_progress || 0),
 
             status: row.status || 'Not Started',
-            remarks: row.remarks || ''
+            remarks: row.remarks || '',
+            created_by: row.created_by || null
         };
     });
 
@@ -8332,6 +8414,8 @@ window.loadProjectScheduleFromSupabase = async function() {
 };
 
 window.saveProjectScheduleTaskToSupabase = async function(taskCode, taskName, taskData = {}) {
+    const existingScheduleRowForAccess = window.projectSchedules?.[window.currentProjectId || currentProjectId]?.[taskCode] || null;
+    if (existingScheduleRowForAccess ? !window.legacyGuardEdit('project-schedule', existingScheduleRowForAccess) : !window.legacyGuardAdd('project-schedule')) return;
     const projectId = window.currentProjectId || currentProjectId;
 
     if (!projectId) {
@@ -8369,7 +8453,8 @@ window.saveProjectScheduleTaskToSupabase = async function(taskCode, taskName, ta
         status: taskData.status || 'Not Started',
         remarks: taskData.remarks || '',
 
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        created_by: window.__suwecoAccess?.user?.id || undefined
     };
 
     const { data, error } = await window.supabase
@@ -8444,7 +8529,8 @@ window.loadProcurementRequestsFromSupabase = async function() {
         description: row.description,
         projectedAmount: parseFloat(row.projected_amount) || 0,
         actualAmount: parseFloat(row.actual_amount) || 0,
-        status: row.status || 'Pending'
+        status: row.status || 'Pending',
+        created_by: row.created_by || null
     }));
 
     window.prsRecords = prsRecords;
@@ -8490,7 +8576,8 @@ window.createLinkedProcurementRecordFromPrs = async function(prsData) {
     target_date: prsData.targetDate || null,
     procurement_status: 'Pending',
     payment_status: 'Unpaid',
-    updated_at: new Date().toISOString()
+    updated_at: new Date().toISOString(),
+    created_by: window.__suwecoAccess?.user?.id || undefined
 };
 
     const { data, error } = await window.supabase
@@ -8576,7 +8663,8 @@ window.loadManilaProcurementFromSupabase = async function() {
     paymentReleased: row.payment_released || '',
     month: row.payment_month || '',
     paymentStatus: row.payment_status || 'Unpaid',
-    payment_status: row.payment_status || 'Unpaid'
+    payment_status: row.payment_status || 'Unpaid',
+    created_by: row.created_by || null
 }));
 
     window.manilaRecords = manilaRecords;
@@ -8652,7 +8740,8 @@ window.loadLocalProcurementFromSupabase = async function() {
         paymentReleased: row.payment_released,
         paymentMonth: row.payment_month,
         paymentStatus: row.payment_status || 'Unpaid',
-        concerns: row.concerns || ''
+        concerns: row.concerns || '',
+        created_by: row.created_by || null
     }));
 
     window.localRecords = localRecords;
@@ -8697,7 +8786,8 @@ window.loadMaterialsMasterlistFromSupabase = async function() {
         unit: row.unit,
         currentStock: Number(row.current_stock || 0),
         minStock: Number(row.min_stock || 0),
-        status: row.status || 'Available'
+        status: row.status || 'Available',
+        created_by: row.created_by || null
     }));
 
     window.materialsMasterlist = materialsMasterlist;
@@ -8754,7 +8844,8 @@ window.loadMaterialsTransactionsFromSupabase = async function() {
         transactionType: row.transaction_type,
         accountabilityNo: row.accountability,
         type: row.transaction_type,
-        remarks: row.remarks
+        remarks: row.remarks,
+        created_by: row.created_by || null
     }));
 
     window.materialsTransactions = materialsTransactions;
@@ -8799,7 +8890,8 @@ window.loadFuelRecordsFromSupabase = async function() {
         remaining: Number(row.qty_in || 0) - Number(row.qty_out || 0),
         time: row.fuel_time,
         equipment: row.equipment || '',
-        remarks: row.remarks || ''
+        remarks: row.remarks || '',
+        created_by: row.created_by || null
     }));
 
     window.fuelRecords = fuelRecords;
@@ -8880,17 +8972,22 @@ window.loadBoqChargingFromSupabase = async function() {
 
     if (!window.boqBudgets) window.boqBudgets = {};
     if (!window.boqBudgets[projectId]) window.boqBudgets[projectId] = {};
+    if (!window.boqBudgetRows) window.boqBudgetRows = {};
+    if (!window.boqBudgetRows[projectId]) window.boqBudgetRows[projectId] = {};
 
     boqBudgets = window.boqBudgets;
 
     (data || []).forEach(row => {
         window.boqBudgets[projectId][row.boq_code] = Number(row.budget_amount || 0);
+        window.boqBudgetRows[projectId][row.boq_code] = row;
     });
 
     console.log('MAPPED BOQ BUDGETS:', window.boqBudgets[projectId]);
 };
 
 window.saveBoqChargingToSupabase = async function(boqCode, budgetAmount, meta = {}) {
+    const boqRowForAccess = window.boqBudgetRows?.[window.currentProjectId || currentProjectId]?.[boqCode] || null;
+    if (boqRowForAccess ? !window.legacyGuardEdit('boq-charging', boqRowForAccess) : !window.legacyGuardAdd('boq-charging')) return;
     const projectId = window.currentProjectId || currentProjectId;
 
     if (!projectId) {
@@ -8911,7 +9008,8 @@ window.saveBoqChargingToSupabase = async function(boqCode, budgetAmount, meta = 
         boq_parent_name: meta.parentName || '',
         description: meta.description || '',
         budget_amount: Number(budgetAmount || 0),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        created_by: window.__suwecoAccess?.user?.id || undefined
     };
 
     const { data, error } = await window.supabase
@@ -8933,6 +9031,8 @@ window.saveBoqChargingToSupabase = async function(boqCode, budgetAmount, meta = 
 
     if (!window.boqBudgets) window.boqBudgets = {};
     if (!window.boqBudgets[projectId]) window.boqBudgets[projectId] = {};
+    if (!window.boqBudgetRows) window.boqBudgetRows = {};
+    if (!window.boqBudgetRows[projectId]) window.boqBudgetRows[projectId] = {};
 
     window.boqBudgets[projectId][boqCode] = Number(budgetAmount || 0);
     boqBudgets = window.boqBudgets;
@@ -9033,6 +9133,10 @@ if (manilaForm) {
     manilaForm.addEventListener('submit', async function(e) {
         e.preventDefault();
 
+        const manilaEditIdForAccess = window.editingManilaId || editingManilaId || null;
+        const existingManilaForAccess = manilaEditIdForAccess ? (window.manilaRecords || manilaRecords || []).find(r => String(r.id) === String(manilaEditIdForAccess)) : null;
+        if (manilaEditIdForAccess ? !window.legacyGuardEdit('manila', existingManilaForAccess) : !window.legacyGuardAdd('manila')) return;
+
         const projectId = window.currentProjectId || currentProjectId;
 
         if (!projectId) {
@@ -9094,7 +9198,8 @@ const payload = {
     payment_month: document.getElementById('manilaMonth')?.value || '',
     payment_status: document.getElementById('manilaPaymentStatus')?.value || 'Unpaid',
 
-    updated_at: new Date().toISOString()
+    updated_at: new Date().toISOString(),
+    created_by: window.__suwecoAccess?.user?.id || undefined
 };
 
         let result;
@@ -9302,6 +9407,8 @@ editingManilaId = null;
         };
 
         window.deleteManilaRecord = function(id) {
+            const existingManilaForAccess = (window.manilaRecords || manilaRecords || []).find(r => String(r.id) === String(id));
+            if (!window.legacyGuardDelete('manila', existingManilaForAccess)) return;
     customConfirm('Are you sure you want to delete this Manila record?', async () => {
         if (!window.supabase) {
             window.showToast?.('Supabase is not connected.', 'error');
@@ -9551,6 +9658,8 @@ window.renderManilaTable = function() {
 };
 
         window.openManilaModal = async function(id = null) {
+    const existingManilaForAccess = id ? (window.manilaRecords || manilaRecords || []).find(r => String(r.id) === String(id)) : null;
+    if (id ? !window.legacyGuardEdit('manila', existingManilaForAccess) : !window.legacyGuardAdd('manila')) return;
     window.editingManilaId = id ? String(id) : null;
     editingManilaId = id ? String(id) : null;
 
@@ -9885,6 +9994,8 @@ if (
         };
 
         window.deleteLocalRecord = function(id) {
+            const existingLocalForAccess = (window.localRecords || localRecords || []).find(r => String(r.id) === String(id));
+            if (!window.legacyGuardDelete('local', existingLocalForAccess)) return;
     customConfirm('Are you sure you want to delete this Local record?', async () => {
         if (!window.supabase) {
             window.showToast?.('Supabase is not connected.', 'error');
@@ -10145,6 +10256,8 @@ if (
         };
 
         window.openLocalModal = function(id = null) {
+            const existingLocalForAccess = id ? (window.localRecords || localRecords || []).find(r => String(r.id) === String(id)) : null;
+            if (id ? !window.legacyGuardEdit('local', existingLocalForAccess) : !window.legacyGuardAdd('local')) return;
             editingLocalId = id;
             const modalOverlay = document.getElementById('localModal');
             if(modalOverlay) {
@@ -10375,6 +10488,10 @@ if (
 if (localForm) {
     localForm.addEventListener('submit', async function(e) {
         e.preventDefault();
+
+        const localEditIdForAccess = window.editingLocalId || editingLocalId || null;
+        const existingLocalForAccess = localEditIdForAccess ? (window.localRecords || localRecords || []).find(r => String(r.id) === String(localEditIdForAccess)) : null;
+        if (localEditIdForAccess ? !window.legacyGuardEdit('local', existingLocalForAccess) : !window.legacyGuardAdd('local')) return;
 
         const projectId = window.currentProjectId || currentProjectId;
 
@@ -12110,7 +12227,8 @@ window.saveMaterialToSupabase = async function() {
         current_stock: Number(document.getElementById('newMaterialCurrentStock')?.value || 0),
         min_stock: Number(document.getElementById('newMaterialMinStock')?.value || 0),
         status: document.getElementById('newMaterialStatus')?.value || 'Available',
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        created_by: window.__suwecoAccess?.user?.id || undefined
     };
 
     if (!payload.item_name) {
@@ -12487,7 +12605,8 @@ window.saveMaterialTransactionToSupabase = async function() {
         accountability: document.getElementById('transactionAccountability')?.value || '',
         remarks: document.getElementById('transactionRemarks')?.value || '',
 
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        created_by: window.__suwecoAccess?.user?.id || undefined
     };
 
     let result;
@@ -13181,6 +13300,7 @@ window.deleteMaterialTransaction = function(id) {
         }
 
         window.openFuelModal = function() {
+            if (!window.legacyGuardAdd('fuel')) return;
             document.getElementById('fuelRecordId').value = '';
             document.getElementById('fuelForm').reset();
             populateEquipmentDropdown();
@@ -13271,6 +13391,8 @@ window.deleteMaterialTransaction = function(id) {
         };
 
         window.editFuelRecord = async function(id) {
+    const accessRecord = (window.fuelRecords || fuelRecords || []).find(r => String(r.id) === String(id));
+    if (!window.legacyGuardEdit('fuel', accessRecord)) return;
     const records = window.fuelRecords || fuelRecords || [];
 
     const record = records.find(r => String(r.id) === String(id));
@@ -13333,6 +13455,8 @@ window.deleteMaterialTransaction = function(id) {
 };
 
 window.deleteFuelRecord = async function(id) {
+    const accessRecord = (window.fuelRecords || fuelRecords || []).find(r => String(r.id) === String(id));
+    if (!window.legacyGuardDelete('fuel', accessRecord)) return;
     const proceed = confirm('Delete this fuel record?');
 
     if (!proceed) return;
