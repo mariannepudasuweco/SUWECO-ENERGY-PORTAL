@@ -6,6 +6,7 @@ import { monitoringModules } from '../../config/modules';
 import { AnimatePresence, motion } from 'motion/react';
 import { isReactPage } from '../../config/pageRegistry';
 import { LegacyVanillaWrapper } from './LegacyVanillaWrapper';
+import { useAccess } from '../../lib/accessControl';
 import {
   generateCurrentPageReport,
   generateFullModuleReport,
@@ -32,6 +33,8 @@ export function MainLayout({
   selectedProjectName,
   toggleProjectSelector,
 }: MainLayoutProps) {
+  const { hasPermission } = useAccess();
+
   const currentModuleObj = activeModule
     ? monitoringModules.find((m) => m.id === activeModule)
     : null;
@@ -40,23 +43,27 @@ export function MainLayout({
     activeModule as string
   );
 
-  const showTabs = !!(
-    currentModuleObj &&
-    currentModuleObj.items &&
-    currentModuleObj.items.length > 0 &&
-    (!requiresProject || selectedProjectId)
-  );
-
   const isSelectingProject = !selectedProjectId && requiresProject;
 
   const [projectsList, setProjectsList] = useState<any[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
-  const reportableModuleItems =
+  const visibleModuleItems =
     currentModuleObj?.items
-      ?.filter((item) => !('type' in item))
+      ?.filter((item) => {
+        if ('type' in item) return false;
+        return hasPermission((item as { id: string }).id, 'view');
+      })
       .map((item) => item as { id: string; label: string; icon?: React.ReactNode }) || [];
+
+  const showTabs = !!(
+    currentModuleObj &&
+    visibleModuleItems.length > 0 &&
+    (!requiresProject || selectedProjectId)
+  );
+
+  const reportableModuleItems = visibleModuleItems;
 
   const currentPageLabel =
     reportableModuleItems.find((item) => item.id === activePage)?.label ||
@@ -280,7 +287,12 @@ export function MainLayout({
 
             <div className="flex gap-[-8px] -space-x-2 overflow-x-auto no-scrollbar pb-0 items-end px-4">
               {showTabs &&
-                currentModuleObj?.items.map((item) => {
+                currentModuleObj?.items
+                .filter((item) => {
+                  if ('type' in item) return false;
+                  return hasPermission((item as { id: string }).id, 'view');
+                })
+                .map((item) => {
                   if ('type' in item && item.type === 'header') {
                     return null;
                   }

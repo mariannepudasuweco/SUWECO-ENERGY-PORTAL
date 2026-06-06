@@ -15,6 +15,7 @@ import {
 import { AppPage, ModuleType } from '../../types/pages';
 import { monitoringModules } from '../../config/modules';
 import { NotificationCenter } from './NotificationCenter';
+import { modulePermissionKeys, useAccess } from '../../lib/accessControl';
 
 interface SidebarProps {
   activePage: AppPage;
@@ -36,6 +37,7 @@ export function Sidebar({
   toggleProjectSelector
 }: SidebarProps) {
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light');
+  const { hasPermission } = useAccess();
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -49,7 +51,7 @@ export function Sidebar({
     } catch(e) {}
   }, [theme]);
 
-  const items = [
+  const allItems = [
     { id: 'budget' as ModuleType, label: 'Budget', icon: <PieChart size={20} /> },
     { id: 'procurement' as ModuleType, label: 'Procurement', icon: <ShoppingCart size={20} /> },
     { id: 'payroll' as ModuleType, label: 'Payroll', icon: <Users size={20} /> },
@@ -58,13 +60,22 @@ export function Sidebar({
     { id: 'tools' as ModuleType, label: 'Tools', icon: <Wrench size={20} /> },
   ];
 
+  const items = allItems.filter((item) =>
+    modulePermissionKeys[item.id as Exclude<ModuleType, null>]?.some((key) =>
+      hasPermission(key, 'view')
+    )
+  );
+
   const handleNavClick = (id: string) => {
     const mod = monitoringModules.find(m => m.id === id);
     if (mod) {
       setActiveModule(mod.id as ModuleType);
       const requiresProject = ['budget', 'procurement', 'payroll', 'project', 'reports'].includes(id);
       if (selectedProjectId || !requiresProject) {
-         const firstPage = mod.items.find(i => !('type' in i));
+         const firstPage = mod.items.find(i => {
+            if ('type' in i) return false;
+            return hasPermission((i as { id: string }).id, 'view');
+         });
          if (firstPage) {
             setActivePage((firstPage as {id: string}).id as AppPage);
          }

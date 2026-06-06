@@ -1,23 +1,38 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Lock } from 'lucide-react';
+import { supabase } from '../lib/supabaseClient';
 
-interface LoginPageProps {
+
+type LoginPageProps = {
   onLogin: () => void;
-}
+  onSignup: () => void;
+};
 
-export default function LoginPage({ onLogin }: LoginPageProps) {
+export default function LoginPage({ onLogin, onSignup }: LoginPageProps) {
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === 'STECteam2026') {
-      setError(false);
-      onLogin();
-    } else {
-      setError(true);
+    setError('');
+    setIsLoading(true);
+
+    const { error: loginError } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    setIsLoading(false);
+
+    if (loginError) {
+      setError(loginError.message || 'Invalid email or password.');
+      return;
     }
+
+    sessionStorage.setItem('isAuthenticated', 'true');
+    onLogin();
   };
 
   return (
@@ -41,29 +56,51 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             />
           </div>
           <h1 className="text-2xl font-bold text-white mb-2 font-inter">Portal Login</h1>
-          <p className="text-gray-400 text-sm text-center">Enter the password to access the monitoring dashboard.</p>
+          <p className="text-gray-400 text-sm text-center">Enter your Supabase login credentials.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <input
+              type="email"
+              placeholder="Email address"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={`w-full bg-white/5 border ${error ? 'border-red-500' : 'border-white/10'} text-white px-5 py-3.5 rounded-xl focus:outline-none focus:border-[#f5a623] transition-colors`}
+              autoFocus
+              required
+            />
+          </div>
+
+          <div>
+            <input
               type="password"
-              placeholder="Enter Password"
+              placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className={`w-full bg-white/5 border ${error ? 'border-red-500' : 'border-white/10'} text-white px-5 py-3.5 rounded-xl focus:outline-none focus:border-[#f5a623] transition-colors`}
-              autoFocus
+              required
             />
             {error && (
-              <p className="text-red-500 text-sm mt-2 ml-1">Incorrect password. Please try again.</p>
+              <p className="text-red-500 text-sm mt-2 ml-1">{error}</p>
             )}
           </div>
+
           <button
             type="submit"
-            className="w-full bg-[#f5a623] hover:bg-[#e09510] text-white font-medium px-5 py-3.5 rounded-xl transition-colors font-inter"
+            disabled={isLoading}
+            className="w-full bg-[#f5a623] hover:bg-[#e09510] disabled:opacity-60 text-white font-medium px-5 py-3.5 rounded-xl transition-colors font-inter"
           >
-            Access Portal
+            {isLoading ? 'Signing in...' : 'Access Portal'}
           </button>
+
+          <button
+  type="button"
+  onClick={onSignup}
+  className="w-full mt-3 text-sm text-slate-600 hover:text-slate-900"
+>
+  Create an account
+</button>
         </form>
         
         <div className="mt-6 text-center">
