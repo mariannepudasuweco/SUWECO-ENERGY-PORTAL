@@ -3624,128 +3624,68 @@ window.renderProjectView = function(projectId) {
 
         
         window.renderProjectScheduleView = function() {
-    const activeProjectId = window.currentProjectId || currentProjectId;
-    if (!activeProjectId) return;
+            const perfId = 'renderProjectScheduleView-' + Date.now();
+            console.time(perfId);
+            try {
+                if (currentProjectId) updateProjectScheduleStats(currentProjectId);
+                if (!currentProjectId) {
+                    console.timeEnd(perfId);
+                    return;
+                }
+                currentView = 'project-schedule';
+                updateSubNavVisibility();
 
-    if (
-        activeProjectId &&
-        window.__projectScheduleLoadedProjectId !== activeProjectId
-    ) {
-        window.__projectScheduleLoadedProjectId = activeProjectId;
+            if (!projectSchedules[currentProjectId]) {
+                projectSchedules[currentProjectId] = {};
+            }
+            const scheduleData = projectSchedules[currentProjectId];
+            const projectBudgets = boqBudgets[currentProjectId] || {};
 
-        if (window.contentArea) {
-            window.contentArea.innerHTML = `
-                <div style="padding: 40px; text-align: center; color: var(--text-muted);">
-                    Loading project schedule...
-                </div>
-            `;
-        }
+            const parentNames = {
+                'B2': 'Permitting',
+                'B3': 'Feasibility Study',
+                'B4': 'Water, Electrical, and Internet Connection',
+                'B5': 'Special Tools, Supplies, and PPE',
+                'B6': 'Administrative Expenses',
+                'C1': 'Logistics',
+                'C2': 'General Works',
+                'C3': 'Diesel Power Plant',
+                'C4': 'Substation and Transmission Line',
+                'C5': 'SCADA System',
+                'C6': 'Testing and Commissioning',
+                'D1': 'General Works',
+                'D2': 'Diesel Power Plant',
+                'D3': 'Substation and Transmission Line',
+                'D4': 'SCADA System',
+                'D5': 'Testing and Commissioning'
+            };
 
-Promise.allSettled([
-    typeof window.loadBoqChargingFromSupabase === 'function'
-        ? window.loadBoqChargingFromSupabase()
-        : Promise.resolve(),
+            const tree = {
+                'A': { title: 'BIDDING', color: '#3b82f6', items: [] },
+                'B': { title: 'PRE-DEVELOPMENT WORKS & OTHER PROJECT EXPENSES', color: '#a855f7', items: [] },
+                'C': { title: 'PROCUREMENT', color: '#f59e0b', items: [] },
+                'D': { title: 'CONSTRUCTION', color: '#22c55e', items: [] }
+            };
 
-    typeof window.loadManilaProcurementFromSupabase === 'function'
-        ? window.loadManilaProcurementFromSupabase()
-        : Promise.resolve(),
+            const itemsByParent = {};
+            let totalProjectBudget = 0;
 
-    typeof window.loadLocalProcurementFromSupabase === 'function'
-        ? window.loadLocalProcurementFromSupabase()
-        : Promise.resolve()
-]).then((results) => {
-    console.log('PROJECT SCHEDULE LOAD RESULTS:', results);
-
-    results.forEach((result, index) => {
-        if (result.status === 'rejected') {
-            console.error(`Project Schedule loader ${index} failed:`, result.reason);
-        }
-    });
-
-    window.renderProjectScheduleView();
-}).catch((error) => {
-    console.error('Project Schedule loading failed:', error);
-
-    window.__projectScheduleLoadedProjectId = null;
-
-    if (window.contentArea) {
-        window.contentArea.innerHTML = `
-            <div style="padding: 40px; text-align: center; color: #ef4444;">
-                Failed to load Project Schedule records. Please check the console.
-            </div>
-        `;
-    }
-});
-
-return;
-    }
-
-    if (activeProjectId) updateProjectScheduleStats(activeProjectId);
-
-    currentView = 'project-schedule';
-    updateSubNavVisibility();
-
-    if (!projectSchedules[activeProjectId]) {
-    projectSchedules[activeProjectId] = {};
-}
-
-const scheduleData = projectSchedules[activeProjectId];
-const projectBudgets = boqBudgets[activeProjectId] || {};
-
-    const parentNames = {
-        'B2': 'Permitting',
-        'B3': 'Feasibility Study',
-        'B4': 'Water, Electrical, and Internet Connection',
-        'B5': 'Special Tools, Supplies, and PPE',
-        'B6': 'Administrative Expenses',
-        'C1': 'Logistics',
-        'C2': 'General Works',
-        'C3': 'Diesel Power Plant',
-        'C4': 'Substation and Transmission Line',
-        'C5': 'SCADA System',
-        'C6': 'Testing and Commissioning',
-        'D1': 'General Works',
-        'D2': 'Diesel Power Plant',
-        'D3': 'Substation and Transmission Line',
-        'D4': 'SCADA System',
-        'D5': 'Testing and Commissioning'
-    };
-
-    const tree = {
-        'A': { title: 'BIDDING', color: '#3b82f6', items: [] },
-        'B': { title: 'PRE-DEVELOPMENT WORKS & OTHER PROJECT EXPENSES', color: '#a855f7', items: [] },
-        'C': { title: 'PROCUREMENT', color: '#f59e0b', items: [] },
-        'D': { title: 'CONSTRUCTION', color: '#22c55e', items: [] }
-    };
-
-    const itemsByParent = {};
-    let totalProjectBudget = 0;
-
-    let customProjectScheduleTasks = window.customProjectScheduleTasks || {};
-
-let combinedOptionsForSched1 = [
-    ...(window.subtaskChargingOptions || subtaskChargingOptions || []),
-    ...(customProjectScheduleTasks[activeProjectId] || [])
-];
-
-    combinedOptionsForSched1.sort((a, b) => {
-        let pA = a.split(' - ')[0].match(/^([A-D])([0-9.]+)$/);
-        let pB = b.split(' - ')[0].match(/^([A-D])([0-9.]+)$/);
-        if (!pA || !pB) return a.localeCompare(b);
-        if (pA[1] !== pB[1]) return pA[1].localeCompare(pB[1]);
-
-        let partsA = pA[2].split('.').map(Number);
-        let partsB = pB[2].split('.').map(Number);
-
-        for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
-            const valA = partsA[i] || 0;
-            const valB = partsB[i] || 0;
-            if (valA !== valB) return valA - valB;
-        }
-
-        return 0;
-    });
-
+            let customProjectScheduleTasks = window.customProjectScheduleTasks || {};
+            let combinedOptionsForSched1 = [...subtaskChargingOptions, ...(customProjectScheduleTasks[currentProjectId] || [])];
+            combinedOptionsForSched1.sort((a, b) => {
+                let pA = a.split(' - ')[0].match(/^([A-D])([0-9.]+)$/);
+                let pB = b.split(' - ')[0].match(/^([A-D])([0-9.]+)$/);
+                if (!pA || !pB) return a.localeCompare(b);
+                if (pA[1] !== pB[1]) return pA[1].localeCompare(pB[1]);
+                let partsA = pA[2].split('.').map(Number);
+                let partsB = pB[2].split('.').map(Number);
+                for(let i=0; i<Math.max(partsA.length, partsB.length); i++) {
+                    let nA = partsA[i] || 0;
+                    let nB = partsB[i] || 0;
+                    if (nA !== nB) return nA - nB;
+                }
+                return 0;
+            });
             combinedOptionsForSched1.forEach(opt => {
                 const match = opt.match(/^([A-D])([0-9.]+)\s*-\s*(.*?)(?:\s*\(.*\))?$/);
                 if (match) {
@@ -3773,6 +3713,12 @@ let combinedOptionsForSched1 = [
 
                     if (code.includes('.')) {
                         const parentCode = code.split('.')[0];
+                        if (!scheduleData[parentCode]) {
+                            scheduleData[parentCode] = {
+                                duration: '', targetStart: '', targetEnd: '', qty: '', weight: '', status: 'Not Started',
+                                actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
+                            };
+                        }
                         if (!itemsByParent[parentCode]) {
                             itemsByParent[parentCode] = {
                                 code: parentCode,
@@ -3781,7 +3727,7 @@ let combinedOptionsForSched1 = [
                                 expanded: scheduleExpandedParents[parentCode] !== false,
                                 subItems: [],
                                 budget: 0,
-                                data: scheduleData[parentCode] || {}
+                                data: scheduleData[parentCode]
                             };
                             tree[category].items.push(itemsByParent[parentCode]);
                         }
@@ -3794,40 +3740,20 @@ let combinedOptionsForSched1 = [
             });
 
             // Calculate totals from Manila and Local records
-            // Calculate totals from Manila and Local records
-const mnlRecords = (window.manilaRecords || manilaRecords || []).filter(r =>
-    String(r.projectId || r.project_id) === String(activeProjectId)
-);
+            const mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId);
+            const lclRecords = localRecords.filter(r => r.projectId === currentProjectId);
+            const allRecords = [...mnlRecords, ...lclRecords];
 
-const lclRecords = (window.localRecords || localRecords || []).filter(r =>
-    String(r.projectId || r.project_id) === String(activeProjectId)
-);
-
-const allRecords = [...mnlRecords, ...lclRecords];
-
-let totalActualExpense = 0;
-
-allRecords.forEach(record => {
-    const charging =
-        record.subtaskCharging ||
-        record.subtask_charging ||
-        record.boqCharging ||
-        record.boq_charging ||
-        record.chargingNoteCode ||
-        record.charging_note_code ||
-        '';
-
-    if (!charging) return;
-
-    const amount =
-        parseFloat(record.actualAmount) ||
-        parseFloat(record.actual_amount) ||
-        parseFloat(record.totalCost) ||
-        parseFloat(record.total_cost) ||
-        0;
-
-    totalActualExpense += amount;
-});
+            let totalActualExpense = 0;
+            
+            allRecords.forEach(record => {
+                if (!record.subtaskCharging) return;
+                const match = record.subtaskCharging.match(/^([A-D][0-9.]+)/);
+                if (match) {
+                    const amount = parseFloat(record.actualAmount) || parseFloat(record.totalCost) || 0;
+                    totalActualExpense += amount;
+                }
+            });
 
 
 
@@ -3847,18 +3773,12 @@ allRecords.forEach(record => {
             });
             // Update the top level max/min from precomputed data
             allCodes.forEach(code => {
-    if (!code.includes('.')) {
-        const d = projectSchedules[activeProjectId]?.[code] || {};
-
-        if (d.targetStart && (!minTargetStart || new Date(d.targetStart) < minTargetStart)) {
-            minTargetStart = new Date(d.targetStart);
-        }
-
-        if (d.targetEnd && (!maxTargetEnd || new Date(d.targetEnd) > maxTargetEnd)) {
-            maxTargetEnd = new Date(d.targetEnd);
-        }
-    }
-});
+                if(!code.includes('.')) {
+                    const d = projectSchedules[currentProjectId][code] || {};
+                    if(d.targetStart && (!minTargetStart || new Date(d.targetStart) < minTargetStart)) minTargetStart = new Date(d.targetStart);
+                    if(d.targetEnd && (!maxTargetEnd || new Date(d.targetEnd) > maxTargetEnd)) maxTargetEnd = new Date(d.targetEnd);
+                }
+            });
 
             // Sort children
             Object.values(tree).forEach(cat => {
@@ -3883,20 +3803,11 @@ allRecords.forEach(record => {
                 return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             };
 
-            
-
-            const overallProgressPct = projectSchedules[activeProjectId]
-    ? Number(projectSchedules[activeProjectId]._overallProgressPct || 0)
-    : 0;
-            const totalProjectBudgetFiltered =
-    Number(totalProjectBudget) ||
-    Number(projects.find(p => String(p.id) === String(activeProjectId))?.budget || 0) ||
-    0;
-
-const budgetUtilizationPct =
-    totalProjectBudgetFiltered > 0
-        ? Math.min(100, (totalActualExpense / totalProjectBudgetFiltered) * 100)
-        : 0;
+            const overallProgressPct = projectSchedules[currentProjectId] ? (projectSchedules[currentProjectId]._overallProgressPct || 0) : 0;
+            const targetProgressPct = projectSchedules[currentProjectId] ? (projectSchedules[currentProjectId]._targetProgressPct || 0) : 0;
+            const variancePct = overallProgressPct - targetProgressPct;
+            const varianceColor = variancePct < 0 ? 'var(--badge-text-red)' : (variancePct > 0 ? 'var(--badge-text-green)' : 'var(--text-muted)');
+            const varianceLabel = `${variancePct > 0 ? '+' : ''}${variancePct.toFixed(1)}%`;
             
             const renderStatusBadge = (status) => {
                 switch(status) {
@@ -3918,7 +3829,6 @@ const budgetUtilizationPct =
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">ITEM NO.</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">DESCRIPTION / SCOPE OF WORK</th>
                                 ${isBaseline ? `
-                                <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600; text-align: right;">BUDGET (₱)</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600; text-align: center;">DURATION (DAYS)</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">TARGET START</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">TARGET END</th>
@@ -3978,11 +3888,13 @@ const budgetUtilizationPct =
                         const parentWeight = totalProjectBudget > 0 ? ((item.budget / totalProjectBudget) * 100).toFixed(2) + '%' : '—';
 
                         const pTargetPct = item.data?.targetQty ? '100.0%' : '0.0%';
+                        let pProgNum = Number(item.data?.computedProgress);
+                        pProgNum = isNaN(pProgNum) ? 0 : pProgNum;
                         console.log('[RENDER]', item.code, {
                            renderedProgress: item.data?.computedProgress
                         });
-                        const pActualPct = item.data?.computedProgress !== undefined ? item.data.computedProgress.toFixed(1) + '%' : '0.0%';
-                        const pVariance = (parseFloat(pActualPct) - parseFloat(pTargetPct)).toFixed(1) + '%';
+                        const pActualPct = pProgNum.toFixed(1) + '%';
+                        const pVariance = (pProgNum - parseFloat(pTargetPct)).toFixed(1) + '%';
                         const pVarianceColor = parseFloat(pVariance) < 0 ? 'var(--badge-text-red)' : (parseFloat(pVariance) > 0 ? 'var(--badge-text-green)' : 'var(--text-muted)');
                         
                         let pDepth = item.code.split('.').length;
@@ -4001,7 +3913,6 @@ const budgetUtilizationPct =
                                     ${item.name}
                                 </td>
                                 ${isBaseline ? `
-                                <td style="padding: 12px 16px; font-size: 0.85rem; font-weight: 600; text-align: right;">${item.budget ? '₱' + item.budget.toLocaleString('en-PH', {minimumFractionDigits: 2}) : '—'}</td>
                                 <td style="padding: 12px 16px; text-align: center;">${item.data?.duration || '—'}</td>
                                 <td style="padding: 12px 16px;">${item.data?.targetStart || '—'}</td>
                                 <td style="padding: 12px 16px;">${item.data?.targetEnd || '—'}</td>
@@ -4010,8 +3921,8 @@ const budgetUtilizationPct =
                                 ` : `
                                 <td style="padding: 12px 16px;">${item.data?.actualStart || '—'}</td>
                                 <td style="padding: 12px 16px;">${item.data?.actualEnd || '—'}</td>
-                                <td style="padding: 12px 16px; text-align: center;">${item.data?.actualQty || '—'}</td>
-                                <td style="padding: 12px 16px; text-align: center;">${item.data?.targetQty || '—'}</td>
+                                <td style="padding: 12px 16px; text-align: center;">${JSON.stringify(item.data?.actualQty)}</td>
+                                <td style="padding: 12px 16px; text-align: center;">${JSON.stringify(item.data?.targetQty)}</td>
                                 <td style="padding: 12px 16px; text-align: right;">${pActualPct}</td>
                                 <td style="padding: 12px 16px; text-align: right;">${pTargetPct}</td>
                                 <td style="padding: 12px 16px; text-align: right; color: ${pVarianceColor};">${pVariance}</td>
@@ -4027,11 +3938,29 @@ const budgetUtilizationPct =
                     const weight = totalProjectBudget > 0 ? ((item.budget / totalProjectBudget) * 100).toFixed(2) + '%' : '—';
                     
                     const targetPct = item.data.targetQty ? '100.0%' : '0.0%';
+                    
+                    const parseQty = (val) => {
+                        if (typeof val === 'number') return val;
+                        if (!val) return 0;
+                        const cleaned = String(val).replace(/,/g, '').replace(/[^\d.-]/g, '');
+                        return Number(cleaned) || 0;
+                    };
+                    const tSafe = Math.max(0, parseQty(item.data.targetQty));
+                    const aSafe = Math.max(0, parseQty(item.data.actualQty));
+                    
+                    let aProgNum = 0;
+                    if (tSafe > 0) {
+                        aProgNum = (aSafe / tSafe) * 100;
+                    } else {
+                        aProgNum = Number(item.data.computedProgress);
+                    }
+                    aProgNum = isNaN(aProgNum) ? 0 : Math.max(0, Math.min(100, aProgNum));
+                    
                     console.log('[RENDER]', item.code, {
                        renderedProgress: item.data?.computedProgress
                     });
-                    const actualPct = item.data.computedProgress !== undefined ? item.data.computedProgress.toFixed(1) + '%' : '0.0%';
-                    const variance = (parseFloat(actualPct) - parseFloat(targetPct)).toFixed(1) + '%';
+                    const actualPct = aProgNum.toFixed(1) + '%';
+                    const variance = (aProgNum - parseFloat(targetPct)).toFixed(1) + '%';
                     const varianceColor = parseFloat(variance) < 0 ? 'var(--badge-text-red)' : (parseFloat(variance) > 0 ? 'var(--badge-text-green)' : 'var(--text-muted)');
                     
                     let depth = item.code.split('.').length;
@@ -4047,7 +3976,6 @@ const budgetUtilizationPct =
                             </td>
                             <td style="padding: 12px 16px 12px ${padLeft}px !important; font-size: 0.85rem;">${item.name}</td>
                             ${isBaseline ? `
-                            <td style="padding: 12px 16px; font-size: 0.85rem; text-align: right;">${item.budget ? '₱' + item.budget.toLocaleString('en-PH', {minimumFractionDigits: 2}) : '—'}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem; text-align: center;">${item.data.duration || '—'}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem;">${item.data.targetStart || '—'}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem;">${item.data.targetEnd || '—'}</td>
@@ -4056,8 +3984,8 @@ const budgetUtilizationPct =
                             ` : `
                             <td style="padding: 12px 16px; font-size: 0.85rem;">${item.data.actualStart || '—'}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem;">${item.data.actualEnd || '—'}</td>
-                            <td style="padding: 12px 16px; font-size: 0.85rem; text-align: center;">${item.data.actualQty || '—'}</td>
-                            <td style="padding: 12px 16px; font-size: 0.85rem; text-align: center;">${item.data.targetQty || '—'}</td>
+                            <td style="padding: 12px 16px; font-size: 0.85rem; text-align: center;">${JSON.stringify(item.data.actualQty)}</td>
+                            <td style="padding: 12px 16px; font-size: 0.85rem; text-align: center;">${JSON.stringify(item.data.targetQty)}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem; text-align: right;">${actualPct}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem; text-align: right;">${targetPct}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem; text-align: right; color: ${varianceColor};">${variance}</td>
@@ -4074,7 +4002,7 @@ const budgetUtilizationPct =
                 Object.values(tree).forEach(cat => {
                     if (cat.items.length === 0) return;
                     
-                    const colSpan = isBaseline ? 11 : 11;
+                    const colSpan = isBaseline ? 10 : 11;
                     
                     tableHtml += `
                         <tr style="background: ${cat.color}15; border-bottom: 2px solid ${cat.color}30;">
@@ -4274,7 +4202,7 @@ const budgetUtilizationPct =
                             <span style="display:flex; align-items:center; gap:4px; font-size: 0.85rem; color: var(--text-muted);"><span style="width:12px;height:12px;background:#22c55e;border-radius:2px;"></span> Actual Progress</span>
                         </div>
                     </div>
-                    <div style="background: var(--bg-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); border: 1px solid var(--border-color); overflow: hidden; display: flex; flex-direction: column;">
+                    <div data-report-preserve="true" class="project-schedule-gantt-report" style="background: var(--bg-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); border: 1px solid var(--border-color); overflow: hidden; display: flex; flex-direction: column;">
                         <div style="overflow-x: auto; overflow-y: hidden; background: var(--badge-bg-gray);">
                             <div style="display: flex; border-bottom: 1px solid var(--border-color); font-size: 0.75rem; font-weight: 600; color: var(--text-main); height: 40px; width: max-content; min-width: 100%;">
                                 <div style="flex: 0 0 320px; padding: 0 16px; text-align: left; border-right: 1px solid var(--border-color); background: var(--badge-bg-gray); z-index: 5; position: sticky; left: 0; display: flex; align-items: center;">TASK</div>
@@ -4299,62 +4227,38 @@ const budgetUtilizationPct =
                     </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
                     <div class="card" style="background: #eff6ff; border: 1px solid #bfdbfe; display: flex; align-items: center; gap: 16px; padding: 16px;">
                         <div style="width: 40px; height: 40px; border-radius: 8px; background: #3b82f6; color: white; display: flex; align-items: center; justify-content: center;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                        </div>
-                        <div>
-                            <div style="font-size: 0.85rem; color: #1d4ed8; font-weight: 600; margin-bottom: 4px;">Total Budget</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #1e3a8a;">₱${totalProjectBudget.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
-                        </div>
-                    </div>
-                    <div class="card" style="background: var(--badge-bg-green); border: 1px solid var(--badge-border-green); display: flex; align-items: center; gap: 16px; padding: 16px;">
-                        <div style="width: 40px; height: 40px; border-radius: 8px; background: #22c55e; color: white; display: flex; align-items: center; justify-content: center;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
                         </div>
-                        <div>
-                            <div style="font-size: 0.85rem; color: #15803d; font-weight: 600; margin-bottom: 4px;">Actual Expense</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #14532d;">₱${totalActualExpense.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 0.85rem; color: #1d4ed8; font-weight: 600; margin-bottom: 4px;">Actual Progress</div>
+                            <div style="font-size: 1.25rem; font-weight: 700; color: var(--primary);">${overallProgressPct.toFixed(1)}%</div>
+                            <div style="height: 8px; background: #dbeafe; border-radius: 4px; overflow: hidden; margin-top: 8px;">
+                                <div style="height: 100%; width: ${Math.max(0, Math.min(100, overallProgressPct))}%; background: #3b82f6; border-radius: 4px;"></div>
+                            </div>
                         </div>
                     </div>
                     <div class="card" style="background: #f5f3ff; border: 1px solid #ddd6fe; display: flex; align-items: center; gap: 16px; padding: 16px;">
                         <div style="width: 40px; height: 40px; border-radius: 8px; background: #8b5cf6; color: white; display: flex; align-items: center; justify-content: center;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                        </div>
-                        <div>
-                            <div style="font-size: 0.85rem; color: #6d28d9; font-weight: 600; margin-bottom: 4px;">Start Date</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #4c1d95;">${formatDate(minTargetStart)}</div>
-                        </div>
-                    </div>
-                    <div class="card" style="background: var(--badge-bg-orange); border: 1px solid var(--badge-border-orange); display: flex; align-items: center; gap: 16px; padding: 16px;">
-                        <div style="width: 40px; height: 40px; border-radius: 8px; background: #f59e0b; color: white; display: flex; align-items: center; justify-content: center;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>
                         </div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 0.85rem; color: #6d28d9; font-weight: 600; margin-bottom: 4px;">Target Progress</div>
+                            <div style="font-size: 1.25rem; font-weight: 700; color: #4c1d95;">${targetProgressPct.toFixed(1)}%</div>
+                            <div style="height: 8px; background: #ede9fe; border-radius: 4px; overflow: hidden; margin-top: 8px;">
+                                <div style="height: 100%; width: ${Math.max(0, Math.min(100, targetProgressPct))}%; background: #8b5cf6; border-radius: 4px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="background: ${variancePct < 0 ? '#fef2f2' : '#f0fdf4'}; border: 1px solid ${variancePct < 0 ? '#fecaca' : '#bbf7d0'}; display: flex; align-items: center; gap: 16px; padding: 16px;">
+                        <div style="width: 40px; height: 40px; border-radius: 8px; background: ${variancePct < 0 ? '#ef4444' : '#22c55e'}; color: white; display: flex; align-items: center; justify-content: center;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 14l4-4 4 4 5-6"></path></svg>
+                        </div>
                         <div>
-                            <div style="font-size: 0.85rem; color: #b45309; font-weight: 600; margin-bottom: 4px;">Target Completion</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #78350f;">${formatDate(maxTargetEnd)}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px;">
-                    <div class="card">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Overall Progress</span>
-                            <span style="font-size: 1.1rem; font-weight: 800; color: var(--text-main);">${overallProgressPct.toFixed(1)}%</span>
-                        </div>
-                        <div style="height: 8px; background: var(--bg-surface); border-radius: 4px; overflow: hidden;">
-                            <div style="height: 100%; width: ${overallProgressPct}%; background: #3b82f6; border-radius: 4px;"></div>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Budget Utilization</span>
-                            <span style="font-size: 1.1rem; font-weight: 800; color: var(--text-main);">${budgetUtilizationPct.toFixed(1)}%</span>
-                        </div>
-                        <div style="height: 8px; background: var(--bg-surface); border-radius: 4px; overflow: hidden;">
-                            <div style="height: 100%; width: ${budgetUtilizationPct}%; background: #10b981; border-radius: 4px;"></div>
+                            <div style="font-size: 0.85rem; color: ${variancePct < 0 ? '#b91c1c' : '#15803d'}; font-weight: 600; margin-bottom: 4px;">Variance</div>
+                            <div style="font-size: 1.25rem; font-weight: 700; color: ${variancePct < 0 ? '#7f1d1d' : '#14532d'};">${varianceLabel}</div>
                         </div>
                     </div>
                 </div>
@@ -4390,18 +4294,12 @@ const budgetUtilizationPct =
                     input.value = val;
                 }
             }
-
-            setTimeout(() => {
-                const rows = document.querySelectorAll('#contentArea table tbody tr');
-                if (rows.length > 0) {
-                    const firstRow = rows[0];
-                    const cells = firstRow.querySelectorAll('td');
-                    if (cells.length > 3) {
-                       const actualPctCell = cells[cells.length - 4];
-                       console.log('[DEBUG-DOM-ACTUAL-PCT]', actualPctCell?.innerText);
-                    }
-                }
-            }, 250);
+            } catch (err) {
+                console.error('[ProjectSchedule] Failed to render view:', err);
+                if (contentArea) contentArea.innerHTML = '<div style="padding: 20px; color: var(--badge-text-red);">Error rendering schedule. Please check the console.</div>';
+            } finally {
+                console.timeEnd(perfId);
+            }
         };
 
         window.toggleScheduleParent = function(code) {
@@ -4469,109 +4367,47 @@ const budgetUtilizationPct =
             }, 100);
         };
 
-        window.saveNewSubtask = async function(parentCode) {
+        window.saveNewSubtask = function(parentCode) {
             if (!window.legacyGuardAdd('project-schedule')) return;
-    const activeProjectId = window.currentProjectId || currentProjectId;
-
-    if (!activeProjectId) {
-        window.showToast?.('Please select a project first.', 'error');
-        return;
-    }
-
-    const name = document.getElementById('newSubtaskName')?.value.trim();
-
-    if (!name) {
-        window.showToast?.('Please enter a task description.', 'error');
-        return;
-    }
-
-    if (!window.customProjectScheduleTasks) {
-        window.customProjectScheduleTasks = {};
-    }
-
-    if (!window.customProjectScheduleTasks[activeProjectId]) {
-        window.customProjectScheduleTasks[activeProjectId] = [];
-    }
-
-    const combinedOptions = [
-        ...(window.subtaskChargingOptions || subtaskChargingOptions || []),
-        ...(window.customProjectScheduleTasks[activeProjectId] || [])
-    ];
-
-    let maxChildNum = 0;
-
-    const escapedParentCode = String(parentCode).replace(/\./g, '\\.');
-    const regex = new RegExp('^' + escapedParentCode + '\\.(\\d+)$');
-
-    combinedOptions.forEach(opt => {
-        const codeMatch = String(opt).match(/^([A-D][0-9.]+)/);
-
-        if (codeMatch) {
-            const code = codeMatch[1];
-            const match = code.match(regex);
-
-            if (match) {
-                const num = parseInt(match[1], 10);
-                if (num > maxChildNum) {
-                    maxChildNum = num;
-                }
+            const name = document.getElementById('newSubtaskName').value.trim();
+            if(!name) return;
+            
+            if(!window.customProjectScheduleTasks) window.customProjectScheduleTasks = {};
+            if(!window.customProjectScheduleTasks[currentProjectId]) {
+                window.customProjectScheduleTasks[currentProjectId] = [];
             }
-        }
-    });
-
-    const newCode = parentCode + '.' + (maxChildNum + 1);
-    const newOption = newCode + ' - ' + name;
-
-    window.customProjectScheduleTasks[activeProjectId].push(newOption);
-
-    if (!window.projectSchedules) {
-        window.projectSchedules = {};
-    }
-
-    if (!window.projectSchedules[activeProjectId]) {
-        window.projectSchedules[activeProjectId] = {};
-    }
-
-    window.projectSchedules[activeProjectId][newCode] = {
-        name: name,
-        duration: '',
-        targetStart: '',
-        targetEnd: '',
-        qty: '',
-        weight: '',
-        status: 'Not Started',
-        actualStart: '',
-        actualEnd: '',
-        actualQty: '',
-        targetQty: '',
-        computedProgress: 0,
-        remarks: ''
-    };
-
-    if (typeof window.saveProjectScheduleTaskToSupabase === 'function') {
-        await window.saveProjectScheduleTaskToSupabase(
-            newCode,
-            name,
-            window.projectSchedules[activeProjectId][newCode]
-        );
-    }
-
-    document.getElementById('addSubtaskModal')?.remove();
-
-    window.__projectScheduleLoadedProjectId = null;
-
-    if (typeof window.loadProjectScheduleFromSupabase === 'function') {
-        await window.loadProjectScheduleFromSupabase();
-    }
-
-    if (typeof window.updateProjectScheduleStats === 'function') {
-        window.updateProjectScheduleStats(activeProjectId);
-    }
-
-    window.renderProjectScheduleView();
-
-    window.showToast?.('Task added successfully.', 'success');
-};
+            
+            // Generate the next code
+            let combinedOptions = [...subtaskChargingOptions, ...window.customProjectScheduleTasks[currentProjectId]];
+            let maxChildNum = 0;
+            // Matches parentCode.X, where X is a number
+            let regex = new RegExp('^' + parentCode.replace(/\./g, '\\.') + '\\.(\\d+)$');
+            combinedOptions.forEach(opt => {
+                let codeMatch = opt.match(/^([A-D][0-9.]+)/);
+                if (codeMatch) {
+                    let c = codeMatch[1];
+                    let m = c.match(regex);
+                    if (m) {
+                        let num = parseInt(m[1], 10);
+                        if (num > maxChildNum) maxChildNum = num;
+                    }
+                }
+            });
+            
+            let newCode = parentCode + '.' + (maxChildNum + 1);
+            let newOption = newCode + ' - ' + name;
+            
+            window.customProjectScheduleTasks[currentProjectId].push(newOption);
+            
+            if(!projectSchedules[currentProjectId]) projectSchedules[currentProjectId] = {};
+            projectSchedules[currentProjectId][newCode] = {
+                duration: '', targetStart: '', targetEnd: '', qty: '', weight: '', status: 'Not Started',
+                actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
+            };
+            
+            document.getElementById('addSubtaskModal').remove();
+            renderProjectScheduleView();
+        };
 
         window.deleteScheduleItem = function(code) {
             const existingScheduleRow = window.projectSchedules?.[currentProjectId]?.[code] || {};
