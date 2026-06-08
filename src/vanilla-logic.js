@@ -377,8 +377,47 @@
                 }
             });
 
+            let targetWeightedProgress = 0;
+            let targetTotalWeight = 0;
+
+            allCodes.forEach(code => {
+                if (!isLeaf[code]) return;
+
+                const data = sched[code];
+                let durationDays = 1;
+                let expectedProgress = 0;
+
+                if (data.targetStart && data.targetEnd) {
+                    const ds = new Date(data.targetStart);
+                    const de = new Date(data.targetEnd);
+
+                    if (!isNaN(ds.getTime()) && !isNaN(de.getTime()) && de >= ds) {
+                        durationDays = Math.ceil((de.getTime() - ds.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+
+                        if (today < ds) {
+                            expectedProgress = 0;
+                        } else if (today >= de) {
+                            expectedProgress = 100;
+                        } else {
+                            const elapsedDays = Math.ceil((today.getTime() - ds.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                            expectedProgress = (elapsedDays / durationDays) * 100;
+                        }
+                    }
+                } else if (Number(data.duration) > 0) {
+                    durationDays = Number(data.duration);
+                    expectedProgress = 0;
+                }
+
+                targetWeightedProgress += (Math.max(0, Math.min(100, expectedProgress)) * durationDays);
+                targetTotalWeight += durationDays;
+            });
+
             let finalOverall = totalWeight > 0 ? (weightedProgress / totalWeight) : 0;
+            let finalTarget = targetTotalWeight > 0 ? (targetWeightedProgress / targetTotalWeight) : 0;
+
             sched._overallProgressPct = isNaN(finalOverall) ? 0 : Math.max(0, Math.min(100, finalOverall));
+            sched._targetProgressPct = isNaN(finalTarget) ? 0 : Math.max(0, Math.min(100, finalTarget));
+            sched._variancePct = sched._overallProgressPct - sched._targetProgressPct;
         };
 
 
@@ -2525,8 +2564,10 @@
             };
 
             const overallProgressPct = projectSchedules[currentProjectId] ? (projectSchedules[currentProjectId]._overallProgressPct || 0) : 0;
-            const totalProjectBudgetFiltered = Object.values(tree).reduce((s, cat) => s + cat.items.filter(n => !n.code.includes('.')).reduce((s2, n) => s2 + (projectBudgets[n.code] || 0), 0), 0);
-            const budgetUtilizationPct = totalProjectBudgetFiltered > 0 ? (totalActualExpense / totalProjectBudgetFiltered) * 100 : 0;
+            const targetProgressPct = projectSchedules[currentProjectId] ? (projectSchedules[currentProjectId]._targetProgressPct || 0) : 0;
+            const variancePct = overallProgressPct - targetProgressPct;
+            const varianceColor = variancePct < 0 ? 'var(--badge-text-red)' : (variancePct > 0 ? 'var(--badge-text-green)' : 'var(--text-muted)');
+            const varianceLabel = `${variancePct > 0 ? '+' : ''}${variancePct.toFixed(1)}%`;
             
             const renderStatusBadge = (status) => {
                 switch(status) {
@@ -2548,7 +2589,6 @@
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">ITEM NO.</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">DESCRIPTION / SCOPE OF WORK</th>
                                 ${isBaseline ? `
-                                <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600; text-align: right;">BUDGET (₱)</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600; text-align: center;">DURATION (DAYS)</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">TARGET START</th>
                                 <th style="padding: 12px 16px; font-size: 0.75rem; font-weight: 600;">TARGET END</th>
@@ -2633,7 +2673,6 @@
                                     ${item.name}
                                 </td>
                                 ${isBaseline ? `
-                                <td style="padding: 12px 16px; font-size: 0.85rem; font-weight: 600; text-align: right;">${item.budget ? '₱' + item.budget.toLocaleString('en-PH', {minimumFractionDigits: 2}) : '—'}</td>
                                 <td style="padding: 12px 16px; text-align: center;">${item.data?.duration || '—'}</td>
                                 <td style="padding: 12px 16px;">${item.data?.targetStart || '—'}</td>
                                 <td style="padding: 12px 16px;">${item.data?.targetEnd || '—'}</td>
@@ -2697,7 +2736,6 @@
                             </td>
                             <td style="padding: 12px 16px 12px ${padLeft}px !important; font-size: 0.85rem;">${item.name}</td>
                             ${isBaseline ? `
-                            <td style="padding: 12px 16px; font-size: 0.85rem; text-align: right;">${item.budget ? '₱' + item.budget.toLocaleString('en-PH', {minimumFractionDigits: 2}) : '—'}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem; text-align: center;">${item.data.duration || '—'}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem;">${item.data.targetStart || '—'}</td>
                             <td style="padding: 12px 16px; font-size: 0.85rem;">${item.data.targetEnd || '—'}</td>
@@ -2724,7 +2762,7 @@
                 Object.values(tree).forEach(cat => {
                     if (cat.items.length === 0) return;
                     
-                    const colSpan = isBaseline ? 11 : 11;
+                    const colSpan = isBaseline ? 10 : 11;
                     
                     tableHtml += `
                         <tr style="background: ${cat.color}15; border-bottom: 2px solid ${cat.color}30;">
@@ -2924,7 +2962,7 @@
                             <span style="display:flex; align-items:center; gap:4px; font-size: 0.85rem; color: var(--text-muted);"><span style="width:12px;height:12px;background:#22c55e;border-radius:2px;"></span> Actual Progress</span>
                         </div>
                     </div>
-                    <div style="background: var(--bg-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); border: 1px solid var(--border-color); overflow: hidden; display: flex; flex-direction: column;">
+                    <div data-report-preserve="true" class="project-schedule-gantt-report" style="background: var(--bg-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-sm); border: 1px solid var(--border-color); overflow: hidden; display: flex; flex-direction: column;">
                         <div style="overflow-x: auto; overflow-y: hidden; background: var(--badge-bg-gray);">
                             <div style="display: flex; border-bottom: 1px solid var(--border-color); font-size: 0.75rem; font-weight: 600; color: var(--text-main); height: 40px; width: max-content; min-width: 100%;">
                                 <div style="flex: 0 0 320px; padding: 0 16px; text-align: left; border-right: 1px solid var(--border-color); background: var(--badge-bg-gray); z-index: 5; position: sticky; left: 0; display: flex; align-items: center;">TASK</div>
@@ -2949,62 +2987,38 @@
                     </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 24px;">
                     <div class="card" style="background: #eff6ff; border: 1px solid #bfdbfe; display: flex; align-items: center; gap: 16px; padding: 16px;">
                         <div style="width: 40px; height: 40px; border-radius: 8px; background: #3b82f6; color: white; display: flex; align-items: center; justify-content: center;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                        </div>
-                        <div>
-                            <div style="font-size: 0.85rem; color: #1d4ed8; font-weight: 600; margin-bottom: 4px;">Total Budget</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: var(--primary);">₱${totalProjectBudget.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
-                        </div>
-                    </div>
-                    <div class="card" style="background: var(--badge-bg-green); border: 1px solid var(--badge-border-green); display: flex; align-items: center; gap: 16px; padding: 16px;">
-                        <div style="width: 40px; height: 40px; border-radius: 8px; background: #22c55e; color: white; display: flex; align-items: center; justify-content: center;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
                         </div>
-                        <div>
-                            <div style="font-size: 0.85rem; color: #15803d; font-weight: 600; margin-bottom: 4px;">Actual Expense</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #14532d;">₱${totalActualExpense.toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 0.85rem; color: #1d4ed8; font-weight: 600; margin-bottom: 4px;">Actual Progress</div>
+                            <div style="font-size: 1.25rem; font-weight: 700; color: var(--primary);">${overallProgressPct.toFixed(1)}%</div>
+                            <div style="height: 8px; background: #dbeafe; border-radius: 4px; overflow: hidden; margin-top: 8px;">
+                                <div style="height: 100%; width: ${Math.max(0, Math.min(100, overallProgressPct))}%; background: #3b82f6; border-radius: 4px;"></div>
+                            </div>
                         </div>
                     </div>
                     <div class="card" style="background: #f5f3ff; border: 1px solid #ddd6fe; display: flex; align-items: center; gap: 16px; padding: 16px;">
                         <div style="width: 40px; height: 40px; border-radius: 8px; background: #8b5cf6; color: white; display: flex; align-items: center; justify-content: center;">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                        </div>
-                        <div>
-                            <div style="font-size: 0.85rem; color: #6d28d9; font-weight: 600; margin-bottom: 4px;">Start Date</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #4c1d95;">${formatDate(minTargetStart)}</div>
-                        </div>
-                    </div>
-                    <div class="card" style="background: var(--badge-bg-orange); border: 1px solid var(--badge-border-orange); display: flex; align-items: center; gap: 16px; padding: 16px;">
-                        <div style="width: 40px; height: 40px; border-radius: 8px; background: #f59e0b; color: white; display: flex; align-items: center; justify-content: center;">
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="6"></circle><circle cx="12" cy="12" r="2"></circle></svg>
                         </div>
+                        <div style="flex: 1;">
+                            <div style="font-size: 0.85rem; color: #6d28d9; font-weight: 600; margin-bottom: 4px;">Target Progress</div>
+                            <div style="font-size: 1.25rem; font-weight: 700; color: #4c1d95;">${targetProgressPct.toFixed(1)}%</div>
+                            <div style="height: 8px; background: #ede9fe; border-radius: 4px; overflow: hidden; margin-top: 8px;">
+                                <div style="height: 100%; width: ${Math.max(0, Math.min(100, targetProgressPct))}%; background: #8b5cf6; border-radius: 4px;"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="background: ${variancePct < 0 ? '#fef2f2' : '#f0fdf4'}; border: 1px solid ${variancePct < 0 ? '#fecaca' : '#bbf7d0'}; display: flex; align-items: center; gap: 16px; padding: 16px;">
+                        <div style="width: 40px; height: 40px; border-radius: 8px; background: ${variancePct < 0 ? '#ef4444' : '#22c55e'}; color: white; display: flex; align-items: center; justify-content: center;">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 14l4-4 4 4 5-6"></path></svg>
+                        </div>
                         <div>
-                            <div style="font-size: 0.85rem; color: #b45309; font-weight: 600; margin-bottom: 4px;">Target Completion</div>
-                            <div style="font-size: 1.25rem; font-weight: 700; color: #78350f;">${formatDate(maxTargetEnd)}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px;">
-                    <div class="card">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Overall Progress</span>
-                            <span style="font-size: 1.1rem; font-weight: 800; color: var(--text-main);">${overallProgressPct.toFixed(1)}%</span>
-                        </div>
-                        <div style="height: 8px; background: var(--bg-surface); border-radius: 4px; overflow: hidden;">
-                            <div style="height: 100%; width: ${overallProgressPct}%; background: #3b82f6; border-radius: 4px;"></div>
-                        </div>
-                    </div>
-                    <div class="card">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                            <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Budget Utilization</span>
-                            <span style="font-size: 1.1rem; font-weight: 800; color: var(--text-main);">${budgetUtilizationPct.toFixed(1)}%</span>
-                        </div>
-                        <div style="height: 8px; background: var(--bg-surface); border-radius: 4px; overflow: hidden;">
-                            <div style="height: 100%; width: ${budgetUtilizationPct}%; background: #10b981; border-radius: 4px;"></div>
+                            <div style="font-size: 0.85rem; color: ${variancePct < 0 ? '#b91c1c' : '#15803d'}; font-weight: 600; margin-bottom: 4px;">Variance</div>
+                            <div style="font-size: 1.25rem; font-weight: 700; color: ${variancePct < 0 ? '#7f1d1d' : '#14532d'};">${varianceLabel}</div>
                         </div>
                     </div>
                 </div>

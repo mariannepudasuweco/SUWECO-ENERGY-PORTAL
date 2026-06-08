@@ -298,6 +298,8 @@ function removePageHeadersAndUITexts(clone: HTMLElement): void {
   ) as HTMLElement[];
 
   elements.forEach((element) => {
+    if (element.closest("[data-report-preserve='true'], .project-schedule-gantt-report")) return;
+
     const text = normalizeText(element.textContent || "");
 
     if (!text) return;
@@ -385,6 +387,48 @@ function removeColumnByIndexes(table: HTMLTableElement, indexes: number[]): void
   });
 }
 
+
+function removeProjectScheduleBudgetColumns(
+  clone: HTMLElement,
+  sectionTitle: string
+): void {
+  const isProjectSchedule = normalizeForCompare(sectionTitle).includes(
+    "project schedule"
+  );
+
+  if (!isProjectSchedule) return;
+
+  const tables = Array.from(
+    clone.querySelectorAll("table")
+  ) as HTMLTableElement[];
+
+  tables.forEach((table) => {
+    const rows = Array.from(table.querySelectorAll("tr"));
+
+    if (!rows.length) return;
+
+    const headerRow = rows.find((row) =>
+      Array.from(row.children).some((cell) =>
+        /budget/i.test(normalizeText(cell.textContent || ""))
+      )
+    );
+
+    if (!headerRow) return;
+
+    const budgetIndexes = Array.from(headerRow.children)
+      .map((cell, index) => ({
+        index,
+        text: normalizeText(cell.textContent || ""),
+      }))
+      .filter((item) => /budget/i.test(item.text))
+      .map((item) => item.index);
+
+    if (budgetIndexes.length) {
+      removeColumnByIndexes(table, budgetIndexes);
+    }
+  });
+}
+
 function removeActionAndBlankColumns(clone: HTMLElement): void {
   const tables = Array.from(
     clone.querySelectorAll("table")
@@ -451,7 +495,7 @@ function isKpiLikeElement(element: HTMLElement): boolean {
   const hasMoneyOrNumber = /₱|php|%|\d/.test(text.toLowerCase());
 
   const hasKpiLabel =
-    /overall progress|budget utilization|total request|total projected amount|total actual amount|total items|low\s*\/\s*out of stock|fully stocked|total qty\.?\s*in|total qty\.?\s*out|total remaining fuel|allotted budget|total paid|total unpaid|grand total|remaining|budget|paid|unpaid|total|projected amount|actual amount|request|count|amount/i.test(
+    /actual progress|target progress|variance|overall progress|budget utilization|total request|total projected amount|total actual amount|total items|low\s*\/\s*out of stock|fully stocked|total qty\.?\s*in|total qty\.?\s*out|total remaining fuel|allotted budget|total paid|total unpaid|grand total|remaining|budget|paid|unpaid|total|projected amount|actual amount|request|count|amount/i.test(
       text
     );
 
@@ -488,7 +532,8 @@ function normalizeKpiCards(clone: HTMLElement, keepKpis: boolean): void {
       /remaining/i.test(text);
 
     const hasProjectScheduleKpis =
-      /overall progress/i.test(text) && /budget utilization/i.test(text);
+      (/actual progress/i.test(text) && /target progress/i.test(text) && /variance/i.test(text)) ||
+      (/overall progress/i.test(text) && /budget utilization/i.test(text));
 
     const hasProcurementKpis =
       /total request/i.test(text) &&
@@ -577,22 +622,30 @@ function normalizeKpiCards(clone: HTMLElement, keepKpis: boolean): void {
     }
 
     if (hasProjectScheduleKpis) {
-      const overallMatch = text.match(/overall progress\s*([\d,.]+%?)/i);
-      const budgetMatch = text.match(/budget utilization\s*([\d,.]+%?)/i);
+      const actualMatch = text.match(/actual progress\s*([+-]?[\d,.]+%?)/i);
+      const targetMatch = text.match(/target progress\s*([+-]?[\d,.]+%?)/i);
+      const varianceMatch = text.match(/variance\s*([+-]?[\d,.]+%?)/i);
+      const legacyOverallMatch = text.match(/overall progress\s*([+-]?[\d,.]+%?)/i);
 
-      const overallProgress = overallMatch?.[1] || "0.0%";
-      const budgetUtilization = budgetMatch?.[1] || "0.0%";
+      const actualProgress = actualMatch?.[1] || legacyOverallMatch?.[1] || "0.0%";
+      const targetProgress = targetMatch?.[1] || "0.0%";
+      const variance = varianceMatch?.[1] || "0.0%";
 
       container.className = "report-kpi-grid";
       container.innerHTML = `
         <div class="report-kpi-card">
-          <div>Overall Progress</div>
-          <div>${escapeHTML(overallProgress)}</div>
+          <div>Actual Progress</div>
+          <div>${escapeHTML(actualProgress)}</div>
         </div>
 
         <div class="report-kpi-card">
-          <div>Budget Utilization</div>
-          <div>${escapeHTML(budgetUtilization)}</div>
+          <div>Target Progress</div>
+          <div>${escapeHTML(targetProgress)}</div>
+        </div>
+
+        <div class="report-kpi-card">
+          <div>Variance</div>
+          <div>${escapeHTML(variance)}</div>
         </div>
       `;
 
@@ -797,7 +850,8 @@ function normalizeSummaryBlocks(clone: HTMLElement): void {
   });
 }
 
-function normalizeCharts(clone: HTMLElement): void {
+function normalizeCharts(clone: HTMLElement, sectionTitle: string): void {
+  const isProjectSchedule = normalizeForCompare(sectionTitle).includes("project schedule");
   const chartElements = Array.from(
     clone.querySelectorAll(
       ".recharts-wrapper, .recharts-responsive-container, canvas, svg, [class*='chart'], [class*='Chart'], [class*='gantt'], [class*='Gantt']"
@@ -805,6 +859,10 @@ function normalizeCharts(clone: HTMLElement): void {
   ) as HTMLElement[];
 
   chartElements.forEach((chart) => {
+    if (isProjectSchedule && chart.closest("[data-report-preserve='true'], .project-schedule-gantt-report")) {
+      return;
+    }
+
     const parent = chart.closest("div, section, article") as HTMLElement | null;
 
     if (parent && !parent.querySelector("table")) {
@@ -820,6 +878,7 @@ function normalizeCharts(clone: HTMLElement): void {
 
   possibleBrokenChartBlocks.forEach((element) => {
     if (element.querySelector("table")) return;
+    if (isProjectSchedule && element.closest("[data-report-preserve='true'], .project-schedule-gantt-report")) return;
 
     const text = normalizeText(element.textContent || "").toLowerCase();
 
@@ -875,6 +934,8 @@ function cleanEmptyElements(clone: HTMLElement): void {
   ) as HTMLElement[];
 
   elements.reverse().forEach((element) => {
+    if (element.closest("[data-report-preserve='true'], .project-schedule-gantt-report")) return;
+
     const text = normalizeText(element.textContent || "");
     const hasTable = !!element.querySelector("table");
     const hasImage = !!element.querySelector("img");
@@ -889,6 +950,10 @@ function cleanEmptyElements(clone: HTMLElement): void {
 function stripInlineStylesAndDarkClasses(clone: HTMLElement): void {
   clone.querySelectorAll("*").forEach((element) => {
     const htmlElement = element as HTMLElement;
+
+    if (htmlElement.closest("[data-report-preserve='true'], .project-schedule-gantt-report")) {
+      return;
+    }
 
     htmlElement.removeAttribute("style");
 
@@ -1005,8 +1070,9 @@ function cleanClonedContent(
   removeControls(clone);
   normalizeKpiCards(clone, options.keepKpis);
   normalizeSummaryBlocks(clone);
-  normalizeCharts(clone);
+  normalizeCharts(clone, options.sectionTitle);
   removeEmptyScheduleRows(clone, options.sectionTitle);
+  removeProjectScheduleBudgetColumns(clone, options.sectionTitle);
   removeActionAndBlankColumns(clone);
   fixCategoryRows(clone);
   removeDuplicateSectionTitlesInsideContent(clone, options.sectionTitle);
@@ -1171,6 +1237,10 @@ function detectBestOrientation(
   );
 
   const tableCount = temp.querySelectorAll("table").length;
+
+  if (temp.querySelector("[data-report-preserve='true'], .project-schedule-gantt-report")) {
+    return "landscape";
+  }
 
   if (maxColumnCount >= 7 || tableCount >= 2) {
     return "landscape";
@@ -1653,6 +1723,31 @@ function buildCapturedReportHTML(params: {
 
           .section-content > div:not(.report-kpi-grid):not(.report-kpi-card) {
             border-radius: 0 !important;
+          }
+
+
+          .section-content [data-report-preserve="true"],
+          .section-content .project-schedule-gantt-report {
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow: visible !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+
+          .section-content .project-schedule-gantt-report > div {
+            overflow: visible !important;
+          }
+
+          .section-content .project-schedule-gantt-report * {
+            box-shadow: none !important;
+            text-shadow: none !important;
+            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact;
+          }
+
+          .section-content .project-schedule-gantt-report [style*="max-height"] {
+            max-height: none !important;
           }
 
           .empty-section {
