@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, Calendar, DollarSign, TrendingUp, FileText, Clock, ChevronRight, Printer } from 'lucide-react';
 import PayrollAuth from './PayrollAuth';
+import PayrollOrgChart from './PayrollOrgChart';
 import { generatePrintInternalHTML } from '../lib/payrollPrinting';
 import { supabase } from '../lib/supabaseClient';
 
@@ -274,6 +275,8 @@ const avgDailyRate = employees.length > 0
 </div>
           </div>
         </div>
+
+        <PayrollOrgChart employees={employees} projectId={activeProjectId} />
       </div>
 
       {previewHtml && createPortal(
