@@ -1,3 +1,10 @@
+import {
+  getActualRequirementCount,
+  getChecklistItemsForSequenceNode,
+  getCompletedChecklistCount,
+  type WbsChecklistLikeItem,
+} from '../utils/wbsAlignment';
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ZoomIn, ZoomOut, Download, Save, MousePointer2, Trash2, Loader2, ClipboardList, Users, Clock, Calendar, Flag, ArrowRight } from 'lucide-react';
 import * as htmlToImage from 'html-to-image';
@@ -194,6 +201,7 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
   const workspaceRef = useRef<HTMLDivElement>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [checklistItems, setChecklistItems] = useState<WbsChecklistLikeItem[]>([]);
 
   // --- Persistence ---
   const [localNodesData, setLocalNodesData] = useState<Record<string, NodeData[]>>(nodesData);
@@ -233,7 +241,7 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     setLocalOffsets4(prev => updateList(prev));
   };
 
-  const { data: globalWbsData, getPhasesSummary } = useWbsData();
+  const { data: globalWbsData } = useWbsData();
   
   // Use state or effect to sync local state if needed, or simply map it directly
   useEffect(() => {
@@ -332,6 +340,8 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     }
 
     const rows = data || [];
+
+    setChecklistItems(rows as WbsChecklistLikeItem[]);
 
     console.log("[WBS Sequence] Checklist rows loaded:", rows.length, rows);
 
@@ -738,19 +748,17 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
                   reqPermits++;
                   if (n.stat === 'COMPLETED') acqPermits++;
                   
-                  let totalTasks = n.totalReqs ?? 0;
-                  if (n.totalReqs === undefined && n.reqs) {
-                      totalTasks = n.reqs.split('<br/>').filter(r => r.trim() !== '').length;
-                  }
-                  
-                  let completedTasks = n.totalAcq ?? 0;
-                  if (n.totalAcq === undefined) {
-                      if (n.stat === 'COMPLETED') {
-                          completedTasks = totalTasks;
-                      } else if (n.stat === 'ONGOING') {
-                          completedTasks = Math.floor(totalTasks / 2);
-                      }
-                  }
+                  const matchedChecklistItems = getChecklistItemsForSequenceNode(
+                      n.title,
+                      checklistItems
+                  );
+
+                  const totalTasks = getActualRequirementCount(n, checklistItems);
+
+                  let completedTasks =
+                      matchedChecklistItems.length > 0
+                          ? getCompletedChecklistCount(n.title, checklistItems)
+                          : n.totalAcq ?? 0;
 
                   // Also check toggledReqs for this node if we want to be more dynamic (optional)
                   // Let's stick to the base logic unless overridden.
@@ -782,7 +790,7 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
   let totalGrandCompleted = 0;
 
   const dashboardCards = phasesSummary.map(phase => {
-    const total = phase.data.length;
+    let total = 0;
     let completed = 0;
     let overdue = 0;
 
@@ -792,16 +800,27 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     let maxS2: Date | null = null;
 
     phase.data.forEach((n) => {
-      if (n.stat === 'COMPLETED') {
-        completed++;
-      } else {
-        if (n.stat === 'DELAYED') {
+      const matchedChecklistItems = getChecklistItemsForSequenceNode(
+        n.title,
+        checklistItems
+      );
+
+      const nodeRequirementCount = getActualRequirementCount(n, checklistItems);
+
+      const nodeCompletedCount =
+        matchedChecklistItems.length > 0
+          ? getCompletedChecklistCount(n.title, checklistItems)
+          : n.totalAcq ?? 0;
+
+      total += nodeRequirementCount;
+      completed += nodeCompletedCount;
+
+      if (n.stat === 'DELAYED') {
+        overdue++;
+      } else if (n.t2 && n.t2 !== '-') {
+        const t2Date = new Date(n.t2);
+        if (!isNaN(t2Date.getTime()) && t2Date < new Date()) {
           overdue++;
-        } else if (n.t2 && n.t2 !== '-') {
-          const t2Date = new Date(n.t2);
-          if (!isNaN(t2Date.getTime()) && t2Date < new Date()) {
-            overdue++;
-          }
         }
       }
 
@@ -866,52 +885,36 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     }
   };
 
-  const getStatusColor = (status: string, defaultColor: string) => {
-    switch (status) {
-      case 'COMPLETED': return '#4C9A74';
-      case 'ONGOING': return '#64799B';
-      case 'DELAYED': return '#C86969';
-      case 'NOT STARTED':
-      case 'NOT YET STARTED': return '#64748b';
-      case 'NOT APPLICABLE': return '#94a3b8';
-      default: return defaultColor || '#4A7CA8';
-    }
-  };
+
 
     const renderNode = (n: NodeData, isHighlighted: boolean = false, isDimmed: boolean = false, index: number = -1, totalNodes: number = -1) => {
-    // Determine status text/icon and pill colors
-    const headerColor = getStatusColor(n.stat, '#4C9A74'); // fallback
     let statText = n.stat;
-    let pillBg = '#f8fafc'; // light gray
-    let pillText = '#64748b';
 
-    if (n.stat === 'COMPLETED') { 
-        pillBg = '#4C9A74'; pillText = '#fff'; statText = 'COMPLETED'; 
-    } else if (n.stat === 'ONGOING') { 
-        pillBg = '#4A7CA8'; pillText = '#fff'; statText = 'ONGOING'; 
-    } else if (n.stat === 'DELAYED') { 
-        pillBg = '#C86969'; pillText = '#fff'; statText = 'DELAYED'; 
-    } else if (n.stat === 'NOT STARTED' || n.stat === 'NOT YET STARTED') { 
-        statText = 'NOT YET STARTED'; 
+    if (n.stat === 'COMPLETED') {
+        statText = 'COMPLETED';
+    } else if (n.stat === 'ONGOING') {
+        statText = 'ONGOING';
+    } else if (n.stat === 'DELAYED') {
+        statText = 'DELAYED';
+    } else if (n.stat === 'NOT STARTED' || n.stat === 'NOT YET STARTED') {
+        statText = 'NOT YET STARTED';
     } else if (n.stat === 'NOT APPLICABLE') {
-        pillBg = '#e2e8f0'; pillText = '#64748b'; statText = 'NOT APPLICABLE'; 
+        statText = 'NOT APPLICABLE';
     }
 
-    // Logic for Checklist Count
-    let totalTasks = n.totalReqs ?? 0;
-    if (n.totalReqs === undefined && n.reqs) {
-        totalTasks = n.reqs.split('<br/>').filter(r => r.trim() !== '').length;
-    }
-    
-    let completedTasks = n.totalAcq ?? 0;
-    if (n.totalAcq === undefined) {
-        if (n.stat === 'COMPLETED') {
-            completedTasks = totalTasks;
-        } else if (n.stat === 'ONGOING') {
-            completedTasks = Math.floor(totalTasks / 2);
-        }
-    }
-    const pct = totalTasks > 0 ? Math.round((completedTasks/totalTasks)*100) : 0;
+    const matchedChecklistItems = getChecklistItemsForSequenceNode(
+        n.title,
+        checklistItems
+    );
+
+    const totalTasks = getActualRequirementCount(n, checklistItems);
+
+    const completedTasks =
+        matchedChecklistItems.length > 0
+            ? getCompletedChecklistCount(n.title, checklistItems)
+            : n.totalAcq ?? 0;
+
+    const pct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
 
     return (
       <div key={n.id} className={`relative flex flex-col items-center transition-all duration-500 ease-in-out ${isDimmed ? 'opacity-50 grayscale-[40%] scale-[0.98]' : 'opacity-100 grayscale-0 scale-100'} ${isHighlighted ? 'z-20' : 'z-10'}`} style={{ width: '300px' }}>
