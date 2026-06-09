@@ -9897,6 +9897,16 @@ if (
 
             // Filter records
             let records = localRecords.filter(m => m.projectId === currentProjectId);
+
+            if (currentLocalTab === 'supplies') {
+    records = records.filter(m => {
+        const prs = m.prsId
+            ? prsRecords.find(p => String(p.id) === String(m.prsId))
+            : null;
+
+        return prs && prs.prsNo;
+    });
+}
             
             if (searchTerm) {
                 records = records.filter(m => {
@@ -9908,6 +9918,7 @@ if (
                            (m.poNo && m.poNo.toLowerCase().includes(searchTerm));
                 });
             }
+            
             
             if (statusVal) {
                 if (currentLocalTab === 'procurement' || currentLocalTab === 'supplies') {
