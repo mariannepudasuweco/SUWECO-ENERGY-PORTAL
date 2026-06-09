@@ -383,7 +383,20 @@
                                 </div>
                                 <div class="form-group">
                                     <label style="font-weight: 600; font-size: 0.85rem;">Date Delivered</label>
-                                    <input type="date" id="manilaDateDelivered" onchange="calculateManilaDaysDelayed()">
+                                    <input type="date" id="manilaDateDelivered" onchange="calculateManilaDaysDelayed(); updateManilaStatus()">
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                    <div class="form-group">
+                                        <label style="font-weight: 600; font-size: 0.85rem;">Days Delayed</label>
+                                        <input type="number" id="manilaDaysDelayed" readonly style="background: var(--bg-surface);">
+                                    </div>
+                                    <div class="form-group">
+                                        <label style="font-weight: 600; font-size: 0.85rem;">Status</label>
+                                        <select id="manilaProcurementStatus" disabled style="background: var(--bg-surface); cursor: not-allowed;">
+                                            <option value="Undelivered">Undelivered</option>
+                                            <option value="Delivered">Delivered</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
                             
@@ -484,7 +497,7 @@
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                                 <div class="form-group">
                                     <label style="font-weight: 600; font-size: 0.85rem;">Payment Released</label>
-                                    <input type="date" id="manilaPaymentReleased" onchange="updateManilaMonth()">
+                                    <input type="date" id="manilaPaymentReleased" onchange="updateManilaMonth(); updateManilaPaymentStatus()">
                                 </div>
                                 <div class="form-group">
                                     <label style="font-weight: 600; font-size: 0.85rem;">Month</label>
@@ -634,7 +647,25 @@
                             </div>
                             <div class="form-group">
                                 <label style="font-weight: 600; font-size: 0.85rem;">Date Delivered</label>
-                                <input type="date" id="localDateDelivered" onchange="calculateLocalDaysDelayed()">
+                                <input type="date" id="localDateDelivered" onchange="calculateLocalDaysDelayed(); updateLocalStatus()">
+                            </div>
+                            </div>
+                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px;">
+                                <div class="form-group">
+                                    <label style="font-weight: 600; font-size: 0.85rem;">Days Delayed</label>
+                                    <input type="number" id="localDaysDelayed" readonly style="background: var(--bg-surface);">
+                                </div>
+                                <div class="form-group">
+                                    <label style="font-weight: 600; font-size: 0.85rem;">Procurement Status</label>
+                                    <select id="localProcurementStatus" disabled style="background: var(--bg-surface); cursor: not-allowed;">
+                                        <option value="Undelivered">Undelivered</option>
+                                        <option value="Delivered">Delivered</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label style="font-weight: 600; font-size: 0.85rem;">Current Department</label>
+                                    <input type="text" id="localCurrentDept">
+                                </div>
                             </div>
                         </div>
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px;">
@@ -646,8 +677,9 @@
                                 <label style="font-weight: 600; font-size: 0.85rem;">Procurement Status</label>
                                 <select id="localProcurementStatus">
                                     <option value="Pending">Pending</option>
-                                    <option value="ONGOING">ONGOING</option>
+                                    <option value="Ongoing">Ongoing</option>
                                     <option value="Delivered">Delivered</option>
+                                    <option value="Undelivered">Undelivered</option>
                                 </select>
                             </div>
                             <div class="form-group">
@@ -713,7 +745,7 @@
                         </div>
                         <div class="form-group">
                             <label style="font-weight: 600; font-size: 0.85rem;">Payment Released</label>
-                            <input type="date" id="localPaymentReleased" onchange="updateLocalMonth()">
+                            <input type="date" id="localPaymentReleased" onchange="updateLocalMonth(); updateLocalPaymentStatus()">
                         </div>
                         <div class="form-group">
                             <label style="font-weight: 600; font-size: 0.85rem;">Month (Auto)</label>
@@ -742,7 +774,7 @@
     </div>
 
     <!-- Fuel Modal -->
-    <div class="modal-overlay" id="fuelModal">
+    <div class="modal-overlay" id="fuelModal" style="display: none;">
         <div class="modal" style="max-width: 500px;">
             <div class="modal-header">
                 <h2 style="font-size: 1.25rem; font-weight: 700;">Add Fuel Record</h2>
@@ -6079,7 +6111,7 @@ window.boqBudgets = boqBudgets;
     }, true);
 }
 
-        window.renderBoqChargingView = function() {
+window.renderBoqChargingView = function() {
     const activeProjectId = window.currentProjectId || currentProjectId;
     if (!activeProjectId) return;
 
@@ -6117,8 +6149,8 @@ window.boqBudgets = boqBudgets;
 Promise.allSettled([
     withTimeout(
         typeof window.loadBoqChargingFromSupabase === 'function'
-            ? window.loadBoqChargingFromSupabase()
-            : Promise.resolve(),
+        ? window.loadBoqChargingFromSupabase()
+        : Promise.resolve(),
         'BOQ budget loader'
     ),
 
@@ -6135,19 +6167,18 @@ Promise.allSettled([
             : Promise.resolve(),
         'Local procurement loader'
     )
-]).then((results) => {
+    ]).then((results) => {
     console.log('BOQ LOAD RESULTS:', results);
-
     results.forEach((result, index) => {
         if (result.status === 'rejected') {
             console.error(`BOQ loader ${index} failed:`, result.reason);
         }
     });
-
+    // Set the flag BEFORE calling render
+    window.__boqChargingLoadedProjectId = activeProjectId;
     window.renderBoqChargingView();
 }).catch((error) => {
     console.error('BOQ loading failed:', error);
-
     if (window.contentArea) {
         window.contentArea.innerHTML = `
             <div style="padding: 40px; text-align: center; color: #ef4444;">
@@ -6160,12 +6191,6 @@ Promise.allSettled([
 return;
 }
 
-    currentView = 'boq-charging';
-            updateSubNavVisibility();
-            
-            if (!boqBudgets[activeProjectId]) {
-    boqBudgets[activeProjectId] = {};
-}
 const projectBudgets = boqBudgets[activeProjectId];
 
 
@@ -6214,41 +6239,39 @@ const getRecordCharging = (record) => {
 };
 
 const getLocalRecordType = (record) => {
-    const repleCategory = String(
-        record.repleCategory ||
-        record.reple_category ||
-        record.localRepleCategory ||
-        record.local_reple_category ||
-        ""
-    ).toLowerCase();
-
-    const process = String(
-        record.process ||
-        record.transaction ||
-        record.localProcess ||
-        record.local_process ||
-        ""
-    ).toLowerCase();
-
-    const hasRepleNo = !!(
-        record.repleNo ||
-        record.reple_no ||
-        record.localRepleNo ||
-        record.local_reple_no
-    );
-
-    const looksLikeMaterials =
-        repleCategory.includes("material") ||
-        process.includes("material") ||
-        String(record.type || "").toLowerCase().includes("material");
-
-    if (looksLikeMaterials) return "local-materials";
-
-    // Default local procurement records are treated as replenishment.
-    // This matches your Local page where the modal is Add New Replenishment.
-    if (hasRepleNo || repleCategory || process) return "reple";
-
+  // Check all possible variations of the category field from the database
+  const repleCategory = String(
+    record.repleCategory ||
+    record.reple_category ||
+    record.category ||
+    record.localRepleCategory ||
+    record.local_reple_category ||
+    ""
+  ).toLowerCase();
+  
+  // 1. Category = Materials -> Maps to Local Paid/Unpaid Columns
+  if (repleCategory.includes("material")) {
+    return "local-materials";
+  }
+  
+  // 2. Category = Admin OR Manpower/Payroll -> Maps to Reple Paid/Unpaid Columns
+  if (repleCategory.includes("admin") || repleCategory.includes("manpower") || repleCategory.includes("payroll")) {
     return "reple";
+  }
+  
+  // Fallback logic for older records missing the category field
+  const process = String(
+    record.process ||
+    record.transaction ||
+    record.localProcess ||
+    record.local_process ||
+    ""
+  ).toLowerCase();
+  
+  if (process.includes("material")) return "local-materials";
+  
+  // Default to Reple
+  return "reple";
 };
 
 const createEmptyBoqTotal = () => ({
@@ -6844,7 +6867,9 @@ ${currentBoqTab === 'All' ? `
             });
 
             const scrollY = window.scrollY;
-            contentArea.innerHTML = html;
+if (window.contentArea) {
+    window.contentArea.innerHTML = html; // ✅ Use window.contentArea
+}
 
             
             // Focus search input and put cursor at end
@@ -7695,6 +7720,7 @@ window.generatePrsNo = async function() {
             const transactionVal = transactionFilter ? transactionFilter.value : '';
             
             let projectRecords = prsRecords.filter(r => r.projectId === currentProjectId);
+projectRecords.sort((a, b) => a.prsNo.localeCompare(b.prsNo, undefined, { numeric: true, sensitivity: 'base' }));
             
             if (searchTerm) {
                 projectRecords = projectRecords.filter(r => 
@@ -8145,9 +8171,9 @@ window.deletePrsRecord = async function(id) {
             }
         } else {
             prsRecords.unshift(mappedRecord);
-        }
-
-        const isManila =
+}
+window.syncActualAmount(mappedRecord.prsNo, mappedRecord.actualAmount);
+const isManila =
             mappedRecord.transaction === 'MNL-MNL' ||
             mappedRecord.transaction === 'LCL-MNL';
 
@@ -8437,125 +8463,125 @@ window.createLinkedProcurementRecordFromPrs = async function(prsData) {
 
 window.loadManilaProcurementFromSupabase = async function() {
     const projectId = window.currentProjectId || currentProjectId;
-
     if (!projectId) {
         console.warn('No current project selected. Cannot load Manila records.');
         return;
     }
-
     if (!window.supabase) {
         console.warn('Supabase is not available. Cannot load Manila records.');
         return;
     }
-
+    
     const { data, error } = await window.supabase
         .from('manila_procurement')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: true });
-
+        .order('created_at', { ascending: true })
+        .limit(10000); // ← DAGDAGAN NG LIMIT
+    
     console.log('LOAD MANILA DATA:', data);
     console.log('LOAD MANILA ERROR:', error);
-
+    
     if (error) {
         console.error(error);
         return;
     }
-
+    
+    // ← HUWAG I-OVERWRITE KUNG EMPTY ANG RESULT
+    if (!data || data.length === 0) {
+        console.warn('Manila fetch returned empty. Keeping cached data.');
+        return;
+    }
+    
     manilaRecords = (data || []).map(row => ({
-    id: row.id,
-    projectId: row.project_id,
-    prsId: row.request_id,
-
-    process: row.process || '',
-    designation: row.designation || '',
-    prsNo: row.prs_no || '',
-    prsDate: row.prs_date || '',
-    item: row.item_particulars || '',
-
-    subtaskCharging: row.subtask_charging || '',
-    subtask_charging: row.subtask_charging || '',
-
-    workItemNo: row.work_item_no || '',
-    poNo: row.po_no || '',
-    supplier: row.supplier || '',
-    targetDate: row.target_date || '',
-    dateDelivered: row.date_delivered || '',
-    daysDelayed: Number(row.days_delayed || 0),
-    procurementStatus: row.procurement_status || 'Pending',
-    currentDepartment: row.current_department || '',
-    remarks: row.remarks || '',
-
-    totalCost: Number(row.total_cost || 0),
-    vatType: row.vat_type || 'Non-VAT',
-    vatAmount: Number(row.vat_amount || 0),
-    termsPercent: Number(row.terms_percent || 100),
-    netOfVat: Number(row.net_of_vat || 0),
-    paymentTerms: row.payment_terms || '',
-    ewt: Number(row.ewt || 0),
-    actualAmount: Number(row.actual_amount || 0),
-    actual_amount: Number(row.actual_amount || 0),
-    neededDate: row.needed_date || '',
-    paymentReleased: row.payment_released || '',
-    month: row.payment_month || '',
-    paymentStatus: row.payment_status || 'Unpaid',
-    payment_status: row.payment_status || 'Unpaid',
-    created_by: row.created_by || null
-}));
-
+        id: row.id,
+        projectId: row.project_id,
+        prsId: row.request_id,
+        process: row.process || '',
+        designation: row.designation || '',
+        prsNo: row.prs_no || '',
+        prsDate: row.prs_date || '',
+        item: row.item_particulars || '',
+        subtaskCharging: row.subtask_charging || '',
+        subtask_charging: row.subtask_charging || '',
+        workItemNo: row.work_item_no || '',
+        poNo: row.po_no || '',
+        supplier: row.supplier || '',
+        targetDate: row.target_date || '',
+        dateDelivered: row.date_delivered || '',
+        daysDelayed: Number(row.days_delayed || 0),
+        procurementStatus: row.procurement_status || 'Pending',
+        currentDepartment: row.current_department || '',
+        remarks: row.remarks || '',
+        totalCost: Number(row.total_cost || 0),
+        vatType: row.vat_type || 'Non-VAT',
+        vatAmount: Number(row.vat_amount || 0),
+        termsPercent: Number(row.terms_percent || 100),
+        netOfVat: Number(row.net_of_vat || 0),
+        paymentTerms: row.payment_terms || '',
+        ewt: Number(row.ewt || 0),
+        actualAmount: Number(row.actual_amount || 0),
+        actual_amount: Number(row.actual_amount || 0),
+        neededDate: row.needed_date || '',
+        paymentReleased: row.payment_released || '',
+        month: row.payment_month || '',
+        paymentStatus: row.payment_status || 'Unpaid',
+        payment_status: row.payment_status || 'Unpaid',
+        created_by: row.created_by || null
+    }));
     window.manilaRecords = manilaRecords;
-
     console.log('MAPPED MANILA RECORDS:', manilaRecords);
 };
 
 window.loadLocalProcurementFromSupabase = async function() {
     const projectId = window.currentProjectId || currentProjectId;
-
     if (!projectId) {
         console.warn('No current project selected. Cannot load Local records.');
         return;
     }
-
     if (!window.supabase) {
         console.warn('Supabase is not available. Cannot load Local records.');
         return;
     }
-
+    
     const { data, error } = await window.supabase
         .from('local_procurement')
         .select('*')
         .eq('project_id', projectId)
-        .order('created_at', { ascending: true });
-
+        .order('created_at', { ascending: true })
+        .limit(10000); // ← DAGDAGAN NG LIMIT
+    
     console.log('LOAD LOCAL DATA:', data);
     console.log('LOAD LOCAL ERROR:', error);
-
+    
     if (error) {
         console.error(error);
         return;
     }
-
+    
+    // ← HUWAG I-OVERWRITE KUNG EMPTY ANG RESULT
+    if (!data || data.length === 0) {
+        console.warn('Local fetch returned empty. Keeping cached data.');
+        return;
+    }
+    
     localRecords = (data || []).map(row => ({
         id: row.id,
         projectId: row.project_id,
         prsId: row.request_id,
-
         process: row.process,
         repleCategory: row.reple_category,
         category: row.category || row.reple_category,
         repleNo: row.reple_no,
         prsNo: row.prs_no,
         item: row.item_particulars,
-
         chargingNoteCode: row.charging_note,
         chargingCategory: row.charging_category,
         boqCharging: row.boq_charging,
         subtaskCharging: row.subtask,
         workItemNo: row.work_item,
-
         startDate: row.transaction_start_date,
         endDate: row.transaction_end_date,
-
         poNo: row.po_no,
         supplier: row.supplier,
         targetDate: row.target_date,
@@ -8563,7 +8589,6 @@ window.loadLocalProcurementFromSupabase = async function() {
         daysDelayed: Number(row.days_delayed || 0),
         procurementStatus: row.status || 'Pending',
         currentDepartment: row.current_department,
-
         totalCost: Number(row.total_cost || 0),
         vatType: row.vat_type || 'Non-VAT',
         vatAmount: Number(row.vat_amount || 0),
@@ -8579,9 +8604,7 @@ window.loadLocalProcurementFromSupabase = async function() {
         concerns: row.concerns || '',
         created_by: row.created_by || null
     }));
-
     window.localRecords = localRecords;
-
     console.log('MAPPED LOCAL RECORDS:', localRecords);
 };
 
@@ -9072,8 +9095,10 @@ if (manilaEditId) {
         window.__procurementDashboardLoadedProjectId = null;
 
         await window.loadManilaProcurementFromSupabase();
-
-        if (typeof closeManilaModal === 'function') {
+const prsNo = document.getElementById('manilaPrsNo')?.value;
+const actualAmt = Number(document.getElementById('manilaActualAmount')?.value || 0);
+window.syncActualAmount(prsNo, actualAmt);
+if (typeof closeManilaModal === 'function') {
             closeManilaModal();
         }
 
@@ -9193,7 +9218,7 @@ editingManilaId = null;
                         <select id="manilaStatusFilter" onchange="renderManilaTable()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
                             <option value="">All Status</option>
                             <option value="Pending">Pending</option>
-                            <option value="ONGOING">ONGOING</option>
+                            <option value="Ongoing">Ongoing</option>
                             <option value="Delivered">Delivered</option>
                             <option value="Unpaid">Unpaid</option>
                             <option value="Paid">Paid</option>
@@ -9313,6 +9338,13 @@ window.renderManilaTable = function() {
     const designationVal = designationFilter ? designationFilter.value : '';
 
     let records = manilaRecords.filter(m => String(m.projectId) === String(currentProjectId));
+records.sort((a, b) => {
+  const prsA = prsRecords.find(p => String(p.id) === String(a.prsId));
+  const prsB = prsRecords.find(p => String(p.id) === String(b.prsId));
+  const prsNoA = prsA ? prsA.prsNo : (a.prsNo || '');
+  const prsNoB = prsB ? prsB.prsNo : (b.prsNo || '');
+  return prsNoA.localeCompare(prsNoB, undefined, { numeric: true, sensitivity: 'base' });
+});
 
     if (searchTerm) {
         records = records.filter(m => {
@@ -9443,7 +9475,7 @@ window.renderManilaTable = function() {
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.dateDelivered || '-'}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.daysDelayed || 0}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">
-                    <span style="padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; background: ${m.procurementStatus === 'Delivered' ? 'rgba(16, 185, 129, 0.1)' : m.procurementStatus === 'ONGOING' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)'}; color: ${m.procurementStatus === 'Delivered' ? 'var(--success)' : m.procurementStatus === 'ONGOING' ? 'var(--primary)' : 'var(--warning)'}; border: 1px solid ${m.procurementStatus === 'Delivered' ? 'rgba(16, 185, 129, 0.2)' : m.procurementStatus === 'ONGOING' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(245, 158, 11, 0.2)'};">${m.procurementStatus || 'Pending'}</span>
+                    <span style="padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; background: ${m.procurementStatus === 'Delivered' ? 'rgba(16, 185, 129, 0.1)' : m.procurementStatus === 'Ongoing' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)'}; color: ${m.procurementStatus === 'Delivered' ? 'var(--success)' : m.procurementStatus === 'Ongoing' ? 'var(--primary)' : 'var(--warning)'}; border: 1px solid ${m.procurementStatus === 'Delivered' ? 'rgba(16, 185, 129, 0.2)' : m.procurementStatus === 'Ongoing' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(245, 158, 11, 0.2)'};">${m.procurementStatus || 'Pending'}</span>
                 </td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.currentDepartment || '-'}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${m.remarks || ''}">${m.remarks || '-'}</td>
@@ -9780,7 +9812,7 @@ if (
                         <select id="localStatusFilter" onchange="renderLocalTable()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
                             <option value="">All Status</option>
                             <option value="Pending">Pending</option>
-                            <option value="ONGOING">ONGOING</option>
+                            <option value="Ongoing">Ongoing</option>
                             <option value="Delivered">Delivered</option>
                             <option value="Unpaid">Unpaid</option>
                             <option value="Paid">Paid</option>
@@ -9883,20 +9915,52 @@ if (
         };
 
         window.renderLocalTable = function() {
-            const thead = document.getElementById('localTableHeader');
-            const tbody = document.getElementById('localTableBody');
-            if (!thead || !tbody) return;
-
-            const searchInput = document.getElementById('localSearchInput');
-            const statusFilter = document.getElementById('localStatusFilter');
-            const categoryFilter = document.getElementById('localCategoryFilter');
-            
-            const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
-            const statusVal = statusFilter ? statusFilter.value : '';
-            const categoryVal = categoryFilter ? categoryFilter.value : '';
-
-            // Filter records
-            let records = localRecords.filter(m => m.projectId === currentProjectId);
+  const thead = document.getElementById('localTableHeader');
+  const tbody = document.getElementById('localTableBody');
+  if (!thead || !tbody) return;
+  
+  const searchInput = document.getElementById('localSearchInput');
+  const statusFilter = document.getElementById('localStatusFilter');
+  const categoryFilter = document.getElementById('localCategoryFilter');
+  const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
+  const statusVal = statusFilter ? statusFilter.value : '';
+  const categoryVal = categoryFilter ? categoryFilter.value : '';
+  
+  // Filter records
+  let records = localRecords.filter(m => m.projectId === currentProjectId);
+  
+  // Sort by Reple No. chronologically: Year → Month → Sequence
+  records.sort((a, b) => {
+    const repleA = a.repleNo || '';
+    const repleB = b.repleNo || '';
+    
+    // Parse format: MM-NNN-YY
+    const parseRepleNo = (reple) => {
+      const parts = reple.split('-');
+      if (parts.length === 3) {
+        return {
+          year: parseInt(parts[2]) || 0,      // YY
+          month: parseInt(parts[0]) || 0,     // MM
+          sequence: parseInt(parts[1]) || 0   // NNN
+        };
+      }
+      return { year: 0, month: 0, sequence: 0 };
+    };
+    
+    const parsedA = parseRepleNo(repleA);
+    const parsedB = parseRepleNo(repleB);
+    
+    // Sort by year first (ascending)
+    if (parsedA.year !== parsedB.year) {
+      return parsedA.year - parsedB.year;
+    }
+    // Then by month (ascending)
+    if (parsedA.month !== parsedB.month) {
+      return parsedA.month - parsedB.month;
+    }
+    // Then by sequence number (ascending)
+    return parsedA.sequence - parsedB.sequence;
+  });
 
             if (currentLocalTab === 'supplies') {
     records = records.filter(m => {
@@ -9976,9 +10040,8 @@ if (
                         <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">BOQ CHARGING</th>
                         <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">NOTE</th>
                         <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">SUBTASK</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">WORK ITEM</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">STATUS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); text-align: right;"></th>
+<th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">WORK ITEM</th>
+<th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); text-align: right;"></th>
                     </tr>
                 `;
             } else if (currentLocalTab === 'supplies') {
@@ -10035,7 +10098,7 @@ if (
                 let statusBadge = '';
                 if (currentLocalTab === 'procurement' || currentLocalTab === 'supplies') {
                     if (m.procurementStatus === 'Delivered') statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2);">Delivered</span>`;
-                    else if (m.procurementStatus === 'ONGOING') statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2);">ONGOING</span>`;
+                    else if (m.procurementStatus === 'Ongoing') statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2);">Ongoing</span>`;
                     else statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(100, 116, 139, 0.1); color: var(--text-muted); border: 1px solid rgba(100, 116, 139, 0.2);">Pending</span>`;
                 } else {
                     if (m.paymentStatus === 'Paid') statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2);">Paid</span>`;
@@ -10053,16 +10116,15 @@ if (
                 `;
 
                 if (currentLocalTab === 'procurement') {
-                    const chargingCat = m.chargingNoteCode ? m.chargingNoteCode.split(' - ')[0] : '-';
-                    rowHtml += `
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.item || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${chargingCat}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.boqCharging || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${chargingCat}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.subtaskCharging || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.workItemNo || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${statusBadge}</td>
-                    `;
+    const chargingCat = m.chargingNoteCode ? m.chargingNoteCode.split(' - ')[0] : '-';
+    rowHtml += `
+        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.item || '-'}</td>
+        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${chargingCat}</td>
+        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.boqCharging || '-'}</td>
+        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${chargingCat}</td>
+        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.subtaskCharging || '-'}</td>
+        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.workItemNo || '-'}</td>
+    `;
                 } else if (currentLocalTab === 'supplies') {
                     rowHtml += `
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.poNo || '-'}</td>
@@ -10330,6 +10392,42 @@ if (
             }
         };
 
+        window.updateManilaStatus = function() {
+  const dateDelivered = document.getElementById('manilaDateDelivered').value;
+  const statusSelects = document.querySelectorAll('#manilaProcurementStatus');
+  statusSelects.forEach(select => {
+    if (dateDelivered) select.value = 'Delivered';
+  });
+};
+window.updateManilaPaymentStatus = function() {
+  const paymentReleased = document.getElementById('manilaPaymentReleased').value;
+  const statusSelects = document.querySelectorAll('#manilaPaymentStatus');
+  statusSelects.forEach(select => {
+    if (paymentReleased) select.value = 'Paid';
+  });
+};
+window.updateLocalStatus = function() {
+  const dateDelivered = document.getElementById('localDateDelivered').value;
+  const statusSelects = document.querySelectorAll('#localProcurementStatus');
+  statusSelects.forEach(select => {
+    if (dateDelivered) select.value = 'Delivered';
+  });
+};
+window.updateLocalPaymentStatus = function() {
+  const paymentReleased = document.getElementById('localPaymentReleased').value;
+  const statusSelects = document.querySelectorAll('#localPaymentStatus');
+  statusSelects.forEach(select => {
+    if (paymentReleased) select.value = 'Paid';
+  });
+};
+window.syncActualAmount = function(prsNo, amount) {
+  if (!prsNo) return;
+  const numAmount = Number(amount) || 0;
+  if (window.prsRecords) window.prsRecords.forEach(r => { if (r.prsNo === prsNo) r.actualAmount = numAmount; });
+  if (window.manilaRecords) window.manilaRecords.forEach(r => { if (r.prsNo === prsNo) { r.actualAmount = numAmount; r.actual_amount = numAmount; } });
+  if (window.localRecords) window.localRecords.forEach(r => { if (r.prsNo === prsNo) { r.actualAmount = numAmount; r.actual_amount = numAmount; } });
+};
+
         const localForm = document.getElementById('localForm');
 
 if (localForm) {
@@ -10436,8 +10534,10 @@ if (localForm) {
         window.__procurementDashboardLoadedProjectId = null;
 
         await window.loadLocalProcurementFromSupabase();
-
-        if (typeof closeLocalModal === 'function') {
+const prsNo = document.getElementById('localPrsNo')?.value;
+const actualAmt = Number(document.getElementById('localActualAmount')?.value || 0);
+window.syncActualAmount(prsNo, actualAmt);
+if (typeof closeLocalModal === 'function') {
             closeLocalModal();
         }
 
@@ -13535,137 +13635,139 @@ if (document.getElementById('breadcrumbProjectName')) {
 
         // Initial Render relies on React now:
         // renderDashboard();
-    </script>
-    <script type="module" src="/src/main.tsx"></script>
-    <!-- Activity Upload Modal -->
-    <div class="modal-overlay" id="activityUploadModal">
-        <div class="modal" style="max-width: 700px; width: 95%; max-height: 90vh; display: flex; flex-direction: column;">
-            <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 16px; margin-bottom: 16px;">
-                <div>
-                    <h2 id="actUploadTitle" style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 4px;">Upload Pictures</h2>
-                    <div id="actTaskName" style="color: var(--text-muted); font-size: 0.9rem;"></div>
-                </div>
-                <button class="close-modal" onclick="closeActivityPhotoModal()">&times;</button>
+</script>
+<script type="module" src="/src/main.tsx"></script>
+
+<!-- Activity Upload Modal (Added style="display: none;" to prevent flashing on load) -->
+<div class="modal-overlay" id="activityUploadModal" style="display: none;">
+    <div class="modal" style="max-width: 700px; width: 95%; max-height: 90vh; display: flex; flex-direction: column;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding-bottom: 16px; margin-bottom: 16px;">
+            <div>
+                <h2 id="actUploadTitle" style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 4px;">Upload Pictures</h2>
+                <div id="actTaskName" style="color: var(--text-muted); font-size: 0.9rem;"></div>
             </div>
-            
-            <div class="modal-body" style="overflow-y: auto; flex: 1; padding-right: 8px;">
-                <form id="activityUploadForm" onsubmit="saveActivityUpdate(event)">
-                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px;">
-                        <div class="form-group">
-                            <label style="font-weight: 600; font-size: 0.85rem;">Status Update</label>
-                            <select id="actStatus" disabled style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background-color: var(--bg-body); cursor: not-allowed;">
-                                <option value="Not Started">Not Started</option>
-                                <option value="ONGOING">ONGOING</option>
-                                <option value="Ongoing">Ongoing</option>
-                                <option value="Delayed">Delayed</option>
-                                <option value="Completed">Completed</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label style="font-weight: 600; font-size: 0.85rem;">Progress (%)</label>
-                            <input type="number" id="actProgress" disabled min="0" max="100" placeholder="0-100" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background-color: var(--bg-body); cursor: not-allowed;">
-                        </div>
-                        <div class="form-group">
-                            <label style="font-weight: 600; font-size: 0.85rem;">Remarks</label>
-                            <input type="text" id="actRemarks" placeholder="Weekly progress notes..." style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color);">
-                        </div>
-                    </div>
-
-                    <div style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
-                        <label style="font-weight: 600; font-size: 0.85rem;">Progress Photos</label>
-                        <button type="button" id="actAddPhotosBtn" class="btn btn-secondary" onclick="triggerActivityFileUpload()" style="font-size: 0.8rem; padding: 6px 12px; display: flex; align-items: center; gap: 6px;">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Add Photos
-                        </button>
-                        <input type="file" id="actFileInput" multiple accept="image/*" style="display: none;" onchange="handleActivityFileSelect(event)">
-                    </div>
-
-                    <div id="actPhotosContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
-                        <!-- Photos injected here -->
-                    </div>
-
-                    <div class="form-actions" style="display: flex; justify-content: flex-end; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border-color);">
-                        <button type="button" class="btn btn-secondary" id="actCancelBtn" onclick="closeActivityPhotoModal()">Cancel</button>
-                        <button type="submit" id="actSaveBtn" class="btn btn-primary">Save Weekly Report</button>
-                    </div>
-                </form>
-            </div>
+            <button class="close-modal" onclick="closeActivityPhotoModal()">&times;</button>
         </div>
-    <!-- WBS Task Modal -->
-    <div id="wbsTaskModal" style="display: none; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000; font-family: 'Inter', sans-serif;">
-        <div style="background: var(--bg-surface); border-radius: 8px; width: 600px; max-width: 90%; box-shadow: 0 10px 25px rgba(0,0,0,0.2); display: flex; flex-direction: column;">
-            <!-- Header -->
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--badge-border-gray);">
-                <h2 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin: 0;">Add New Task</h2>
-                <button onclick="closeWbsTaskModal()" style="background: none; border: none; font-size: 1.5rem; color: #94a3b8; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+        
+        <div class="modal-body" style="overflow-y: auto; flex: 1; padding-right: 8px;">
+            <form id="activityUploadForm" onsubmit="saveActivityUpdate(event)">
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px;">
+                    <div class="form-group">
+                        <label style="font-weight: 600; font-size: 0.85rem;">Status Update</label>
+                        <select id="actStatus" disabled style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background-color: var(--bg-body); cursor: not-allowed;">
+                            <option value="Not Started">Not Started</option>
+                            <option value="Ongoing">Ongoing</option>
+                            <option value="Delayed">Delayed</option>
+                            <option value="Completed">Completed</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label style="font-weight: 600; font-size: 0.85rem;">Progress (%)</label>
+                        <input type="number" id="actProgress" disabled min="0" max="100" placeholder="0-100" style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background-color: var(--bg-body); cursor: not-allowed;">
+                    </div>
+                    <div class="form-group">
+                        <label style="font-weight: 600; font-size: 0.85rem;">Remarks</label>
+                        <input type="text" id="actRemarks" placeholder="Weekly progress notes..." style="width: 100%; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color);">
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center;">
+                    <label style="font-weight: 600; font-size: 0.85rem;">Progress Photos</label>
+                    <button type="button" id="actAddPhotosBtn" class="btn btn-secondary" onclick="triggerActivityFileUpload()" style="font-size: 0.8rem; padding: 6px 12px; display: flex; align-items: center; gap: 6px;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Add Photos
+                    </button>
+                    <input type="file" id="actFileInput" multiple accept="image/*" style="display: none;" onchange="handleActivityFileSelect(event)">
+                </div>
+
+                <div id="actPhotosContainer" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                    <!-- Photos injected here -->
+                </div>
+
+                <div class="form-actions" style="display: flex; justify-content: flex-end; gap: 12px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+                    <button type="button" class="btn btn-secondary" id="actCancelBtn" onclick="closeActivityPhotoModal()">Cancel</button>
+                    <button type="submit" id="actSaveBtn" class="btn btn-primary">Save Weekly Report</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- WBS Task Modal -->
+<div id="wbsTaskModal" style="display: none; align-items: center; justify-content: center; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 10000; font-family: 'Inter', sans-serif;">
+    <div style="background: var(--bg-surface); border-radius: 8px; width: 600px; max-width: 90%; box-shadow: 0 10px 25px rgba(0,0,0,0.2); display: flex; flex-direction: column;">
+        <!-- Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px; border-bottom: 1px solid var(--badge-border-gray);">
+            <h2 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin: 0;">Add New Task</h2>
+            <button onclick="closeWbsTaskModal()" style="background: none; border: none; font-size: 1.5rem; color: #94a3b8; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
+        </div>
+        
+        <!-- Body -->
+        <div style="padding: 24px; display: flex; flex-direction: column; gap: 20px;">
+            <!-- Task Name -->
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Task Name</label>
+                <input type="text" placeholder="Enter task name" style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; outline: none; color: var(--text-main); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);">
             </div>
             
-            <!-- Body -->
-            <div style="padding: 24px; display: flex; flex-direction: column; gap: 20px;">
-                <!-- Task Name -->
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Task Name</label>
-                    <input type="text" placeholder="Enter task name" style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; outline: none; color: var(--text-main); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);">
-                </div>
+            <!-- Sub-task Box -->
+            <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; background: var(--bg-body); display: flex; flex-direction: column; gap: 16px;">
+                <label style="display: flex; align-items: center; gap: 10px; font-size: 0.95rem; font-weight: 500; color: var(--text-main); cursor: pointer;">
+                    <input type="checkbox" style="width: 18px; height: 18px; accent-color: #0d9488;">
+                    This is a sub-task (Predecessor / Parent exists)
+                </label>
                 
-                <!-- Sub-task Box -->
-                <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 20px; background: var(--bg-body); display: flex; flex-direction: column; gap: 16px;">
-                    <label style="display: flex; align-items: center; gap: 10px; font-size: 0.95rem; font-weight: 500; color: var(--text-main); cursor: pointer;">
-                        <input type="checkbox" style="width: 18px; height: 18px; accent-color: #0d9488;">
-                        This is a sub-task (Predecessor / Parent exists)
-                    </label>
-                    
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted);">Prerequisites (Dependencies)</label>
-                        <select multiple style="padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.9rem; color: var(--text-main); outline: none; height: 100px; background: var(--bg-surface); font-family: 'Inter', sans-serif;">
-                            <option value="1.1">1.1 - DENR - ONLINE REGISTRATION</option>
-                            <option value="1.2">1.2 - LOT ACQUISITION</option>
-                            <option value="1.3">1.3 - TECHNICAL STUDIES</option>
-                            <option value="1.4">1.4 - ENGINEERING DESIGNS</option>
-                            <option value="1.5">1.5 - WATER CONNECTION</option>
-                        </select>
-                        <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 500;">Hold Ctrl/Cmd to select multiple</div>
-                    </div>
-                </div>
-
-                <!-- Owner & Phase -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Owner / Personnel</label>
-                        <select style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; background-color: var(--bg-surface); -webkit-appearance: auto;">
-                            <option>John Doe</option>
-                            <option>Jane Smith</option>
-                        </select>
-                    </div>
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Phase</label>
-                        <select style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; background-color: var(--bg-surface); -webkit-appearance: auto;">
-                            <option>COMPETITIVE SELECTION PROCESS</option>
-                            <option>PRE-DEVELOPMENT PHASE 1</option>
-                        </select>
-                    </div>
-                </div>
-
-                <!-- Dates -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Start Date</label>
-                        <input type="date" value="2026-04-01" style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05); font-family: 'Inter', sans-serif;">
-                    </div>
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
-                        <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Due Date</label>
-                        <input type="date" value="2026-04-15" style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05); font-family: 'Inter', sans-serif;">
-                    </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="font-size: 0.85rem; font-weight: 500; color: var(--text-muted);">Prerequisites (Dependencies)</label>
+                    <select multiple style="padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.9rem; color: var(--text-main); outline: none; height: 100px; background: var(--bg-surface); font-family: 'Inter', sans-serif;">
+                        <option value="1.1">1.1 - DENR - ONLINE REGISTRATION</option>
+                        <option value="1.2">1.2 - LOT ACQUISITION</option>
+                        <option value="1.3">1.3 - TECHNICAL STUDIES</option>
+                        <option value="1.4">1.4 - ENGINEERING DESIGNS</option>
+                        <option value="1.5">1.5 - WATER CONNECTION</option>
+                    </select>
+                    <div style="font-size: 0.75rem; color: #94a3b8; font-weight: 500;">Hold Ctrl/Cmd to select multiple</div>
                 </div>
             </div>
 
-            <!-- Footer -->
-            <div style="padding: 20px 24px; border-top: 1px solid var(--badge-border-gray); display: flex; justify-content: flex-end; gap: 12px; background: var(--bg-surface); border-radius: 0 0 8px 8px;">
-                <button onclick="closeWbsTaskModal()" style="padding: 10px 20px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); color: var(--text-muted); font-weight: 600; font-size: 0.95rem; cursor: pointer;">Cancel</button>
-                <button onclick="closeWbsTaskModal()" style="padding: 10px 20px; border: none; border-radius: 6px; background: #0d9488; color: #fff; font-weight: 600; font-size: 0.95rem; cursor: pointer; box-shadow: 0 2px 4px rgba(13, 148, 136, 0.2);">Save Task</button>
+            <!-- Owner & Phase -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Owner / Personnel</label>
+                    <select style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; background-color: var(--bg-surface); -webkit-appearance: auto;">
+                        <option>John Doe</option>
+                        <option>Jane Smith</option>
+                    </select>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Phase</label>
+                    <select style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; background-color: var(--bg-surface); -webkit-appearance: auto;">
+                        <option>COMPETITIVE SELECTION PROCESS</option>
+                        <option>PRE-DEVELOPMENT PHASE 1</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Dates -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Start Date</label>
+                    <input type="date" value="2026-04-01" style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05); font-family: 'Inter', sans-serif;">
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Due Date</label>
+                    <input type="date" value="2026-04-15" style="padding: 10px 14px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.95rem; color: var(--text-main); outline: none; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05); font-family: 'Inter', sans-serif;">
+                </div>
             </div>
         </div>
+
+        <!-- Footer -->
+        <div style="padding: 20px 24px; border-top: 1px solid var(--badge-border-gray); display: flex; justify-content: flex-end; gap: 12px; background: var(--bg-surface); border-radius: 0 0 8px 8px;">
+            <button onclick="closeWbsTaskModal()" style="padding: 10px 20px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-surface); color: var(--text-muted); font-weight: 600; font-size: 0.95rem; cursor: pointer;">Cancel</button>
+            <button onclick="closeWbsTaskModal()" style="padding: 10px 20px; border: none; border-radius: 6px; background: #0d9488; color: #fff; font-weight: 600; font-size: 0.95rem; cursor: pointer; box-shadow: 0 2px 4px rgba(13, 148, 136, 0.2);">Save Task</button>
+        </div>
     </div>
-    </div>
+</div>
+
 <script>
 document.addEventListener('fullscreenchange', () => {
     const e = document.getElementById('wbs-preview-container-js') || document.getElementById('wbs-preview-container-script') || document.getElementById('wbs-preview-container-index');
