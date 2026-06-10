@@ -9851,7 +9851,7 @@ if (
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between;">
                     <div style="flex: 1; max-width: 400px; position: relative;">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                        <input type="text" id="localSearchInput" oninput="renderLocalTable()" placeholder="Search REPLE no., item, supplier, charging..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main);">
+                        <input type="text" id="localSearchInput" oninput="resetLocalFiltersAndRender()" placeholder="Search REPLE no., item, supplier, charging..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main);">
                     </div>
                     
                     <div style="display: flex; gap: 12px; align-items: center;">
@@ -9862,14 +9862,14 @@ if (
                             <button id="localTabBudget" onclick="setLocalTab('budget')" style="padding: 6px 16px; border: none; background: ${currentLocalTab === 'budget' ? 'var(--bg-surface)' : 'transparent'}; color: ${currentLocalTab === 'budget' ? 'var(--text-main)' : 'var(--text-muted)'}; border-radius: 4px; font-size: 0.85rem; font-weight: ${currentLocalTab === 'budget' ? '600' : '500'}; cursor: pointer; box-shadow: var(--shadow-sm)' : 'none'};">Budget</button>
                         </div>
                         
-                        <select id="localCategoryFilter" onchange="renderLocalTable()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
+                        <select id="localCategoryFilter" onchange="resetLocalFiltersAndRender()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
                             <option value="">All Categories</option>
                             <option value="Admin Expense">Admin Expense</option>
                             <option value="Materials Expense">Materials Expense</option>
                             <option value="Manpower Expense">Manpower Expense</option>
                         </select>
 
-                        <select id="localStatusFilter" onchange="renderLocalTable()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
+                        <select id="localStatusFilter" onchange="resetLocalFiltersAndRender()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
                             <option value="">All Status</option>
                             <option value="Pending">Pending</option>
                             <option value="Ongoing">Ongoing</option>
@@ -9969,260 +9969,411 @@ if (
             }
         };
 
+        window.resetLocalFiltersAndRender = function() {
+            localCurrentPage = 1;
+            renderLocalTable();
+        };
+
         window.changeLocalPage = function(dir) {
             localCurrentPage += dir;
             renderLocalTable();
         };
 
         window.renderLocalTable = function() {
-  const thead = document.getElementById('localTableHeader');
-  const tbody = document.getElementById('localTableBody');
-  if (!thead || !tbody) return;
-  
-  const searchInput = document.getElementById('localSearchInput');
-  const statusFilter = document.getElementById('localStatusFilter');
-  const categoryFilter = document.getElementById('localCategoryFilter');
-  const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
-  const statusVal = statusFilter ? statusFilter.value : '';
-  const categoryVal = categoryFilter ? categoryFilter.value : '';
-  
-  // Filter records
-  let records = localRecords.filter(m => m.projectId === currentProjectId);
-  
-  // Sort by Reple No. chronologically: Year → Month → Sequence
-  records.sort((a, b) => {
-    const repleA = a.repleNo || '';
-    const repleB = b.repleNo || '';
-    
-    // Parse format: MM-NNN-YY
-    const parseRepleNo = (reple) => {
-      const parts = reple.split('-');
-      if (parts.length === 3) {
-        return {
-          year: parseInt(parts[2]) || 0,      // YY
-          month: parseInt(parts[0]) || 0,     // MM
-          sequence: parseInt(parts[1]) || 0   // NNN
-        };
-      }
-      return { year: 0, month: 0, sequence: 0 };
+    const thead = document.getElementById('localTableHeader');
+    const tbody = document.getElementById('localTableBody');
+    if (!thead || !tbody) return;
+
+    const searchInput = document.getElementById('localSearchInput');
+    const statusFilter = document.getElementById('localStatusFilter');
+    const categoryFilter = document.getElementById('localCategoryFilter');
+
+    const normalize = (value) => String(value || '').trim().toLowerCase();
+
+    const normalizeCategory = (value) => {
+        return String(value || '')
+            .trim()
+            .toLowerCase()
+            .replace(/expenses/g, 'expense')
+            .replace(/[^a-z0-9]/g, '');
     };
-    
-    const parsedA = parseRepleNo(repleA);
-    const parsedB = parseRepleNo(repleB);
-    
-    // Sort by year first (ascending)
-    if (parsedA.year !== parsedB.year) {
-      return parsedA.year - parsedB.year;
-    }
-    // Then by month (ascending)
-    if (parsedA.month !== parsedB.month) {
-      return parsedA.month - parsedB.month;
-    }
-    // Then by sequence number (ascending)
-    return parsedA.sequence - parsedB.sequence;
-  });
 
-            if (currentLocalTab === 'supplies') {
-    records = records.filter(m => {
-        const prs = m.prsId
-            ? prsRecords.find(p => String(p.id) === String(m.prsId))
-            : null;
+    const searchTerm = normalize(searchInput?.value);
+    const statusVal = normalize(statusFilter?.value);
+    const categoryValRaw = categoryFilter?.value || '';
+    const categoryVal = normalizeCategory(categoryValRaw);
 
-        return prs && prs.prsNo;
-    });
-}
-            
-            if (searchTerm) {
-                records = records.filter(m => {
-                    const prs = m.prsId ? prsRecords.find(p => p.id === m.prsId) : null;
-                    return (prs && prs.prsNo.toLowerCase().includes(searchTerm)) ||
-                           (m.repleNo && m.repleNo.toLowerCase().includes(searchTerm)) ||
-                           (m.item && m.item.toLowerCase().includes(searchTerm)) ||
-                           (m.supplier && m.supplier.toLowerCase().includes(searchTerm)) ||
-                           (m.poNo && m.poNo.toLowerCase().includes(searchTerm));
-                });
-            }
-            
-            
-            if (statusVal) {
-                if (currentLocalTab === 'procurement' || currentLocalTab === 'supplies') {
-                    records = records.filter(m => m.procurementStatus === statusVal);
-                } else {
-                    records = records.filter(m => m.paymentStatus === statusVal);
-                }
-            }
+    const getProjectId = (r) => r.projectId || r.project_id || '';
+    const getId = (r) => r.id || '';
 
-            if (categoryVal) {
-                records = records.filter(m => m.repleCategory === categoryVal);
-            }
+    const getProcess = (r) => String(
+        r.process ||
+        r.transaction ||
+        r.localProcess ||
+        r.local_process ||
+        ''
+    ).trim();
 
-            // Pagination logic
-            let paginatedRecords = records;
-            let totalPages = 1;
-            
-            if (localRowsPerPageValue !== 'all') {
-                totalPages = Math.ceil(records.length / localRowsPerPageValue) || 1;
-                if (localCurrentPage > totalPages) localCurrentPage = totalPages;
-                if (localCurrentPage < 1) localCurrentPage = 1;
-                
-                const startIndex = (localCurrentPage - 1) * localRowsPerPageValue;
-                paginatedRecords = records.slice(startIndex, startIndex + localRowsPerPageValue);
-            }
-            
-            // Update pagination UI
-            const paginationInfo = document.getElementById('localPaginationInfo');
-            const prevBtn = document.getElementById('localPrevBtn');
-            const nextBtn = document.getElementById('localNextBtn');
-            
-            if (paginationInfo) {
-                if (localRowsPerPageValue === 'all') {
-                    paginationInfo.textContent = `Showing all ${records.length} records`;
-                } else {
-                    const start = (localCurrentPage - 1) * localRowsPerPageValue + 1;
-                    const end = Math.min(localCurrentPage * localRowsPerPageValue, records.length);
-                    paginationInfo.textContent = `${start}-${end} of ${records.length}`;
-                }
-            }
-            
-            if (prevBtn) prevBtn.disabled = localCurrentPage <= 1;
-            if (nextBtn) nextBtn.disabled = localCurrentPage >= totalPages || localRowsPerPageValue === 'all';
+    const getCategory = (r) => String(
+        r.repleCategory ||
+        r.reple_category ||
+        r.category ||
+        r.localRepleCategory ||
+        r.local_reple_category ||
+        ''
+    ).trim();
 
-            // Render Headers
-            if (currentLocalTab === 'procurement') {
-                thead.innerHTML = `
-                    <tr>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">PROCESS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">CATEGORY</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">REPLE NO.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">PRS NO.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">ITEM/PARTICULARS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">CHARGING CAT.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">BOQ CHARGING</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">NOTE</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">SUBTASK</th>
-<th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">WORK ITEM</th>
-<th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); text-align: right;"></th>
-                    </tr>
-                `;
-            } else if (currentLocalTab === 'supplies') {
-                thead.innerHTML = `
-                    <tr>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">PROCESS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">CATEGORY</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">REPLE NO.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">PRS NO.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">PO NO.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">SUPPLIER</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">TARGET DATE</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">DELIVERED</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">DELAYED</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">STATUS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">DEPT.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">REMARKS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); text-align: right;"></th>
-                    </tr>
-                `;
-            } else {
-                thead.innerHTML = `
-                    <tr>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">PROCESS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">CATEGORY</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">REPLE NO.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">PRS NO.</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">TOTAL COST</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">VAT</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">VAT AMT</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">TERMS %</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">EWT</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">ACTUAL AMT</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">NEEDED DATE</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">MONTH</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">STATUS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color);">CONCERNS</th>
-                        <th style="padding: 14px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); text-align: right;"></th>
-                    </tr>
-                `;
-            }
+    const getRepleNo = (r) => String(
+        r.repleNo ||
+        r.reple_no ||
+        r.localRepleNo ||
+        r.local_reple_no ||
+        ''
+    ).trim();
 
-            // Render Body
-            tbody.innerHTML = '';
-            if (paginatedRecords.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="15" style="padding: 24px; text-align: center; color: var(--text-muted);">No replenishment records found.</td></tr>`;
-                return;
-            }
+    const getPrsId = (r) => r.prsId || r.request_id || r.prs_id || '';
 
-            paginatedRecords.forEach(m => {
-                const prs = m.prsId ? prsRecords.find(p => p.id === m.prsId) : null;
-                const prsNo = prs ? prs.prsNo : '-';
-                
-                let statusBadge = '';
-                if (currentLocalTab === 'procurement' || currentLocalTab === 'supplies') {
-                    if (m.procurementStatus === 'Delivered') statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2);">Delivered</span>`;
-                    else if (m.procurementStatus === 'Ongoing') statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2);">Ongoing</span>`;
-                    else statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(100, 116, 139, 0.1); color: var(--text-muted); border: 1px solid rgba(100, 116, 139, 0.2);">Pending</span>`;
-                } else {
-                    if (m.paymentStatus === 'Paid') statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2);">Paid</span>`;
-                    else statusBadge = `<span style="padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 500; background: rgba(245, 158, 11, 0.1); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.2);">Unpaid</span>`;
-                }
+    const getPrsRecord = (r) => {
+        const prsId = getPrsId(r);
+        if (!prsId) return null;
+        return (window.prsRecords || prsRecords || []).find(p => String(p.id) === String(prsId)) || null;
+    };
 
-                const ewtLabels = {0: 'No EWT', 1: 'Goods (1%)', 2: 'Services (2%)'};
-                const ewtLabel = ewtLabels[m.ewt] || 'No EWT';
+    const getPrsNo = (r) => {
+        const prs = getPrsRecord(r);
+        return String(
+            r.prsNo ||
+            r.prs_no ||
+            prs?.prsNo ||
+            prs?.prs_no ||
+            ''
+        ).trim();
+    };
 
-                let rowHtml = `<tr>
-                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span style="color: var(--primary); font-weight: 500; background: rgba(0, 82, 204, 0.1); padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${m.process}</span></td>
-                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span style="color: var(--badge-text-orange); font-weight: 500; background: rgba(245, 158, 11, 0.1); padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${m.repleCategory}</span></td>
-                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600;">${m.repleNo || '-'}</td>
-                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); color: var(--primary);">${prsNo}</td>
-                `;
+    const getItem = (r) => {
+        const prs = getPrsRecord(r);
+        return String(
+            r.item ||
+            r.item_particulars ||
+            r.description ||
+            r.activity_description ||
+            prs?.description ||
+            prs?.item ||
+            prs?.item_particulars ||
+            ''
+        ).trim();
+    };
 
-                if (currentLocalTab === 'procurement') {
-    const chargingCat = m.chargingNoteCode ? m.chargingNoteCode.split(' - ')[0] : '-';
-    rowHtml += `
-        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.item || '-'}</td>
-        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${chargingCat}</td>
-        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.boqCharging || '-'}</td>
-        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${chargingCat}</td>
-        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.subtaskCharging || '-'}</td>
-        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.workItemNo || '-'}</td>
-    `;
-                } else if (currentLocalTab === 'supplies') {
-                    rowHtml += `
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.poNo || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.supplier || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.targetDate ? new Date(m.targetDate).toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'}).replace(/ /g, '-') : '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.dateDelivered ? new Date(m.dateDelivered).toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'}).replace(/ /g, '-') : '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.daysDelayed}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${statusBadge}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.currentDepartment || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.concerns || '-'}</td>
-                    `;
-                } else {
-                    rowHtml += `
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 500;">₱${m.totalCost.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.vatType}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">₱${m.vatAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.paymentTermsPercent}%</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${ewtLabel}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600; color: var(--success);">₱${m.actualAmount.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.paymentNeededDate ? new Date(m.paymentNeededDate).toLocaleDateString('en-GB', {day: '2-digit', month: 'short', year: 'numeric'}).replace(/ /g, '-') : '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.paymentMonth || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${statusBadge}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.concerns || '-'}</td>
-                    `;
-                }
+    const getChargingCategory = (r) => String(
+        r.chargingCategory ||
+        r.charging_category ||
+        ''
+    ).trim();
 
-                rowHtml += `
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right;">
-                            <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                                <button class="btn btn-secondary" onclick="openLocalModal('${m.id}')" style="padding: 4px 8px; font-size: 0.8rem;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
-                                <button class="btn btn-secondary" onclick="deleteLocalRecord('${m.id}')" style="padding: 4px 8px; font-size: 0.8rem; color: var(--danger);"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg></button>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-                tbody.innerHTML += rowHtml;
-            });
+    const getBoqCharging = (r) => String(
+        r.boqCharging ||
+        r.boq_charging ||
+        ''
+    ).trim();
+
+    const getChargingNoteCode = (r) => String(
+        r.chargingNoteCode ||
+        r.charging_note_code ||
+        ''
+    ).trim();
+
+    const getSubtaskCharging = (r) => String(
+        r.subtaskCharging ||
+        r.subtask_charging ||
+        ''
+    ).trim();
+
+    const getWorkItemNo = (r) => String(
+        r.workItemNo ||
+        r.work_item_no ||
+        r.boqWorkItemNo ||
+        r.boq_work_item_no ||
+        ''
+    ).trim();
+
+    const getPoNo = (r) => String(
+        r.poNo ||
+        r.po_no ||
+        ''
+    ).trim();
+
+    const getSupplier = (r) => String(
+        r.supplier ||
+        ''
+    ).trim();
+
+    const getPaymentStatus = (r) => String(
+        r.paymentStatus ||
+        r.payment_status ||
+        'Unpaid'
+    ).trim();
+
+    const getProcurementStatus = (r) => String(
+        r.procurementStatus ||
+        r.procurement_status ||
+        ''
+    ).trim();
+
+    const getActualAmount = (r) => {
+        const raw = r.actualAmount ?? r.actual_amount ?? r.actualAmountToPay ?? r.actual_amount_to_pay ?? 0;
+        const cleaned = String(raw).replace(/₱/g, '').replace(/,/g, '').trim();
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const formatCurrency = (value) => {
+        return '₱' + Number(value || 0).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    };
+
+    const escapeHtml = (value) => {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    };
+
+    const badgeHtml = (text, type = 'info') => {
+        const safe = escapeHtml(text || '-');
+        const styles = {
+            info: 'background:#e8f1ff;color:#0065ff;',
+            warning: 'background:#fff3e0;color:#f97316;',
+            success: 'background:#eafff5;color:#008a63;',
+            danger: 'background:#fee2e2;color:#dc2626;',
+            neutral: 'background:#f1f5f9;color:#475569;'
         };
+        return `<span style="${styles[type] || styles.neutral} padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; display: inline-block; line-height: 1.4;">${safe}</span>`;
+    };
+
+    const actionButtonsHtml = (id) => {
+        const safeId = escapeHtml(id);
+        return `
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <button onclick="openLocalModal('${safeId}')" title="Edit" style="width: 28px; height: 28px; border: 1px solid var(--border-color); background: var(--bg-surface); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); cursor: pointer;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20h9"></path>
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+                    </svg>
+                </button>
+                <button onclick="deleteLocalRecord('${safeId}')" title="Delete" style="width: 28px; height: 28px; border: 1px solid var(--border-color); background: var(--bg-surface); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: #ef4444; cursor: pointer;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M3 6h18"></path>
+                        <path d="M8 6V4h8v2"></path>
+                        <path d="M19 6l-1 14H6L5 6"></path>
+                        <path d="M10 11v6"></path>
+                        <path d="M14 11v6"></path>
+                    </svg>
+                </button>
+            </div>
+        `;
+    };
+
+    const cellStyle = 'padding: 12px 16px; border-bottom: 1px solid var(--border-color); vertical-align: middle; color: var(--text-main);';
+    const thStyle = 'padding: 12px 16px; border-bottom: 1px solid var(--border-color); color: var(--text-muted); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; white-space: nowrap;';
+
+    let records = (window.localRecords || localRecords || []).filter(r => {
+        return String(getProjectId(r)) === String(currentProjectId);
+    });
+
+    if (currentLocalTab === 'supplies') {
+        records = records.filter(r => {
+            const categoryKey = normalizeCategory(getCategory(r));
+            const prs = getPrsRecord(r);
+            return categoryKey.includes('material') || !!prs || !!getPrsNo(r);
+        });
+    }
+
+    if (searchTerm) {
+        records = records.filter(r => {
+            const combined = [
+                getProcess(r),
+                getCategory(r),
+                getRepleNo(r),
+                getPrsNo(r),
+                getItem(r),
+                getChargingCategory(r),
+                getBoqCharging(r),
+                getChargingNoteCode(r),
+                getSubtaskCharging(r),
+                getWorkItemNo(r),
+                getPoNo(r),
+                getSupplier(r),
+                getPaymentStatus(r),
+                getProcurementStatus(r)
+            ].join(' ').toLowerCase();
+
+            return combined.includes(searchTerm);
+        });
+    }
+
+    if (statusVal && statusVal !== 'all') {
+        records = records.filter(r => {
+            return normalize(getPaymentStatus(r)) === statusVal ||
+                   normalize(getProcurementStatus(r)) === statusVal;
+        });
+    }
+
+    if (categoryVal && categoryVal !== 'all') {
+        records = records.filter(r => {
+            const recordCategory = normalizeCategory(getCategory(r));
+
+            if (categoryVal.includes('manpower')) {
+                return recordCategory.includes('manpower');
+            }
+
+            if (categoryVal.includes('admin')) {
+                return recordCategory.includes('admin');
+            }
+
+            if (categoryVal.includes('material')) {
+                return recordCategory.includes('material');
+            }
+
+            return recordCategory === categoryVal;
+        });
+    }
+
+    records.sort((a, b) => {
+        const parseRepleNo = (reple) => {
+            const parts = String(reple || '').split('-');
+            if (parts.length === 3) {
+                return {
+                    year: parseInt(parts[2]) || 0,
+                    month: parseInt(parts[0]) || 0,
+                    sequence: parseInt(parts[1]) || 0
+                };
+            }
+            return { year: 0, month: 0, sequence: 0 };
+        };
+
+        const parsedA = parseRepleNo(getRepleNo(a));
+        const parsedB = parseRepleNo(getRepleNo(b));
+
+        if (parsedA.year !== parsedB.year) return parsedA.year - parsedB.year;
+        if (parsedA.month !== parsedB.month) return parsedA.month - parsedB.month;
+        return parsedA.sequence - parsedB.sequence;
+    });
+
+    if (currentLocalTab === 'budget') {
+        thead.innerHTML = `
+            <tr>
+                <th style="${thStyle}">PROCESS</th>
+                <th style="${thStyle}">CATEGORY</th>
+                <th style="${thStyle}">REPLE NO.</th>
+                <th style="${thStyle}">PRS NO.</th>
+                <th style="${thStyle}">ITEM/PARTICULARS</th>
+                <th style="${thStyle}">ACTUAL AMOUNT</th>
+                <th style="${thStyle}">PAYMENT STATUS</th>
+                <th style="${thStyle} text-align:center;">ACTION</th>
+            </tr>
+        `;
+    } else {
+        thead.innerHTML = `
+            <tr>
+                <th style="${thStyle}">PROCESS</th>
+                <th style="${thStyle}">CATEGORY</th>
+                <th style="${thStyle}">REPLE NO.</th>
+                <th style="${thStyle}">PRS NO.</th>
+                <th style="${thStyle}">ITEM/PARTICULARS</th>
+                <th style="${thStyle}">CHARGING CAT.</th>
+                <th style="${thStyle}">BOQ CHARGING</th>
+                <th style="${thStyle}">NOTE</th>
+                <th style="${thStyle}">SUBTASK</th>
+                <th style="${thStyle}">WORK ITEM NO.</th>
+                <th style="${thStyle} text-align:center;">ACTION</th>
+            </tr>
+        `;
+    }
+
+    const totalRecords = records.length;
+    const rowsPerPage = localRowsPerPageValue === 'all' ? totalRecords || 1 : Number(localRowsPerPageValue || 10);
+    const totalPages = Math.max(1, Math.ceil(totalRecords / rowsPerPage));
+
+    if (localCurrentPage > totalPages) localCurrentPage = totalPages;
+    if (localCurrentPage < 1) localCurrentPage = 1;
+
+    const startIndex = localRowsPerPageValue === 'all' ? 0 : (localCurrentPage - 1) * rowsPerPage;
+    const paginatedRecords = localRowsPerPageValue === 'all'
+        ? records
+        : records.slice(startIndex, startIndex + rowsPerPage);
+
+    if (paginatedRecords.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="${currentLocalTab === 'budget' ? 8 : 11}" style="padding: 32px; text-align: center; color: var(--text-muted);">
+                    No local records found.
+                </td>
+            </tr>
+        `;
+    } else {
+        tbody.innerHTML = paginatedRecords.map(r => {
+            const id = getId(r);
+            const category = getCategory(r);
+            const process = getProcess(r);
+            const paymentStatus = getPaymentStatus(r);
+            const statusType = normalize(paymentStatus) === 'paid' ? 'success' : 'warning';
+
+            if (currentLocalTab === 'budget') {
+                return `
+                    <tr>
+                        <td style="${cellStyle}">${badgeHtml(process || '-', 'info')}</td>
+                        <td style="${cellStyle}">${badgeHtml(category || '-', 'warning')}</td>
+                        <td style="${cellStyle} font-weight: 700;">${escapeHtml(getRepleNo(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getPrsNo(r) || '-')}</td>
+                        <td style="${cellStyle}; min-width: 260px;">${escapeHtml(getItem(r) || '-')}</td>
+                        <td style="${cellStyle} font-weight: 700;">${formatCurrency(getActualAmount(r))}</td>
+                        <td style="${cellStyle}">${badgeHtml(paymentStatus || 'Unpaid', statusType)}</td>
+                        <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
+                    </tr>
+                `;
+            }
+
+            return `
+                <tr>
+                    <td style="${cellStyle}">${badgeHtml(process || '-', 'info')}</td>
+                    <td style="${cellStyle}">${badgeHtml(category || '-', 'warning')}</td>
+                    <td style="${cellStyle} font-weight: 700;">${escapeHtml(getRepleNo(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getPrsNo(r) || '-')}</td>
+                    <td style="${cellStyle}; min-width: 320px;">${escapeHtml(getItem(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getChargingCategory(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getBoqCharging(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getChargingNoteCode(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getSubtaskCharging(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getWorkItemNo(r) || '-')}</td>
+                    <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    const paginationInfo = document.getElementById('localPaginationInfo');
+    if (paginationInfo) {
+        if (totalRecords === 0) {
+            paginationInfo.textContent = 'Showing 0 records';
+        } else if (localRowsPerPageValue === 'all') {
+            paginationInfo.textContent = `Showing all ${totalRecords} records`;
+        } else {
+            const from = startIndex + 1;
+            const to = Math.min(startIndex + rowsPerPage, totalRecords);
+            paginationInfo.textContent = `Showing ${from}-${to} of ${totalRecords} records`;
+        }
+    }
+
+    const prevBtn = document.getElementById('localPrevBtn');
+    const nextBtn = document.getElementById('localNextBtn');
+
+    if (prevBtn) prevBtn.disabled = localCurrentPage <= 1 || localRowsPerPageValue === 'all';
+    if (nextBtn) nextBtn.disabled = localCurrentPage >= totalPages || localRowsPerPageValue === 'all';
+};
 
         window.openLocalModal = function(id = null) {
             const existingLocalForAccess = id ? (window.localRecords || localRecords || []).find(r => String(r.id) === String(id)) : null;
@@ -10249,20 +10400,34 @@ if (
                 const prsSelect = document.getElementById('localPrsSelect');
                 if (prsSelect) {
                     prsSelect.innerHTML = '<option value="">Select existing PRS (LCL-LCL or MNL-LCL)</option>';
-                    const eligiblePrs = prsRecords.filter(p => {
-                        if (String(p.projectId) !== String(currentProjectId)) return false;
-                        if (p.transaction !== 'LCL-LCL' && p.transaction !== 'MNL-LCL') return false;
-                        // If editing, allow the current PRS. If new, only allow PRS without a Local record.
-                        if (id) {
-                            const currentRecord = localRecords.find(m => m.id === id);
-                            if (currentRecord && String(currentRecord.prsId) === String(p.id)) return true;
-                        }
-                        return !localRecords.some(m => m.prsId === p.id);
+
+                    const allPrsRecords = window.prsRecords || prsRecords || [];
+                    const normalizeText = (value) => String(value || '').trim().toUpperCase();
+                    const getPrsProjectId = (record) => record.projectId || record.project_id || '';
+                    const getPrsTransaction = (record) => normalizeText(
+                        record.transaction ||
+                        record.transaction_type ||
+                        record.process ||
+                        ''
+                    );
+
+                    const eligiblePrs = allPrsRecords.filter(p => {
+                        const projectId = getPrsProjectId(p);
+                        const transaction = getPrsTransaction(p);
+
+                        if (String(projectId) !== String(currentProjectId)) return false;
+
+                        return transaction === 'LCL-LCL' || transaction === 'MNL-LCL';
                     });
+
                     eligiblePrs.forEach(p => {
                         const option = document.createElement('option');
+                        const prsNo = p.prsNo || p.prs_no || 'No PRS No.';
+                        const description = p.description || p.item || p.item_particulars || '';
+                        const transaction = p.transaction || p.transaction_type || p.process || '';
+
                         option.value = p.id;
-                        option.textContent = `${p.prsNo} - ${p.description.substring(0, 30)}...`;
+                        option.textContent = `${prsNo} - ${transaction} - ${String(description).substring(0, 40)}`;
                         prsSelect.appendChild(option);
                     });
                 }
