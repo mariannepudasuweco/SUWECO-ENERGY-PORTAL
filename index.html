@@ -6111,6 +6111,18 @@ window.boqBudgets = boqBudgets;
     }, true);
 }
 
+window.setBoqTab = function(tab) {
+    if (currentBoqTab === tab) return;
+
+    const scrollY = window.scrollY;
+    currentBoqTab = tab;
+
+    requestAnimationFrame(() => {
+        renderBoqChargingView();
+        window.scrollTo(0, scrollY);
+    });
+};
+
 window.renderBoqChargingView = function() {
     const activeProjectId = window.currentProjectId || currentProjectId;
     if (!activeProjectId) return;
@@ -6191,7 +6203,7 @@ Promise.allSettled([
 return;
 }
 
-const projectBudgets = boqBudgets[activeProjectId];
+const projectBudgets = window.boqBudgets?.[activeProjectId] || {};
 
 
 // BOQ paid/unpaid must be based ONLY on Manila and Local actual amounts.
@@ -6207,13 +6219,51 @@ const lclRecords = (window.localRecords || localRecords || []).filter(
     r => String(r.projectId || r.project_id) === String(activeProjectId)
 );
 
+console.log('BOQ MANILA RECORDS:', mnlRecords.map(r => ({
+    prs_no: r.prsNo || r.prs_no,
+    subtask: r.subtaskCharging || r.subtask_charging,
+    boq: r.boqCharging || r.boq_charging,
+    totalCost: r.totalCost,
+    total_cost: r.total_cost,
+    actualAmount: r.actualAmount,
+    actual_amount: r.actual_amount,
+    paymentStatus: r.paymentStatus,
+    payment_status: r.payment_status
+})));
+
+console.log('BOQ LOCAL RECORDS:', lclRecords.map(r => ({
+    prs_no: r.prsNo || r.prs_no,
+    subtask: r.subtaskCharging || r.subtask_charging,
+    boq: r.boqCharging || r.boq_charging,
+    totalCost: r.totalCost,
+    total_cost: r.total_cost,
+    actualAmount: r.actualAmount,
+    actual_amount: r.actual_amount,
+    paymentStatus: r.paymentStatus,
+    payment_status: r.payment_status
+})));
+
+const parseMoney = (value) => {
+    if (value === null || value === undefined || value === '') return 0;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+
+    const cleaned = String(value)
+        .replace(/₱/g, '')
+        .replace(/,/g, '')
+        .trim();
+
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const getRecordAmount = (record) => {
-    return (
-        Number(record.actualAmount || 0) ||
-        Number(record.actual_amount || 0) ||
-        Number(record.totalCost || 0) ||
-        Number(record.total_cost || 0) ||
-        0
+    // IMPORTANT: BOQ Charging must use ACTUAL AMOUNT only.
+    // Do not fall back to totalCost/total_cost because Total Cost is not the paid/unpaid amount.
+    return parseMoney(
+        record.actualAmount ??
+        record.actual_amount ??
+        record.actualAmountToPay ??
+        record.actual_amount_to_pay
     );
 };
 
@@ -6225,12 +6275,25 @@ const getRecordPaymentStatus = (record) => {
     ).trim().toLowerCase();
 };
 
+const getRecordPaymentMonth = (record) => {
+    return String(
+        record.paymentMonth ||
+        record.payment_month ||
+        record.month ||
+        ""
+    ).trim();
+};
+
 const getRecordCharging = (record) => {
+    // Prefer the field that normally contains the BOQ code/full BOQ charging option.
+    // This supports Manila subtask_charging and Local charging/subtask fields.
     return (
         record.subtaskCharging ||
         record.subtask_charging ||
+        record.subtask ||
         record.chargingNoteCode ||
         record.charging_note_code ||
+        record.charging_note ||
         record.boqCharging ||
         record.boq_charging ||
         record.charging ||
@@ -6239,39 +6302,35 @@ const getRecordCharging = (record) => {
 };
 
 const getLocalRecordType = (record) => {
-  // Check all possible variations of the category field from the database
-  const repleCategory = String(
-    record.repleCategory ||
-    record.reple_category ||
-    record.category ||
-    record.localRepleCategory ||
-    record.local_reple_category ||
-    ""
-  ).toLowerCase();
-  
-  // 1. Category = Materials -> Maps to Local Paid/Unpaid Columns
-  if (repleCategory.includes("material")) {
-    return "local-materials";
-  }
-  
-  // 2. Category = Admin OR Manpower/Payroll -> Maps to Reple Paid/Unpaid Columns
-  if (repleCategory.includes("admin") || repleCategory.includes("manpower") || repleCategory.includes("payroll")) {
+    // Local page category rule:
+    // Materials Expense  -> Local Paid/Unpaid (Materials)
+    // Admin Expense      -> Reple Paid/Unpaid
+    // Manpower Expense   -> Reple Paid/Unpaid
+    const category = String(
+        record.repleCategory ||
+        record.reple_category ||
+        record.category ||
+        record.localRepleCategory ||
+        record.local_reple_category ||
+        ""
+    ).trim().toLowerCase();
+
+    if (category.includes("material")) return "local-materials";
+    if (category.includes("admin") || category.includes("manpower")) return "reple";
+
+    // Safe fallback for older Local rows without category.
+    const process = String(
+        record.process ||
+        record.transaction ||
+        record.localProcess ||
+        record.local_process ||
+        ""
+    ).trim().toLowerCase();
+
+    if (process.includes("material")) return "local-materials";
+
+    // Default Local records to REPLE when category is missing, so they do not mix with materials.
     return "reple";
-  }
-  
-  // Fallback logic for older records missing the category field
-  const process = String(
-    record.process ||
-    record.transaction ||
-    record.localProcess ||
-    record.local_process ||
-    ""
-  ).toLowerCase();
-  
-  if (process.includes("material")) return "local-materials";
-  
-  // Default to Reple
-  return "reple";
 };
 
 const createEmptyBoqTotal = () => ({
@@ -6447,7 +6506,7 @@ console.log("BOQ TOTALS BY CODE:", totalsByCode);
 const item = {
     code: code,
     name: name,
-    budget: projectBudgets[code] || 0,
+    budget: Number(projectBudgets?.[code] || 0),
 
     manilaPaid: totals.manilaPaid || 0,
     localPaidMaterials: totals.localPaidMaterials || 0,
@@ -6639,9 +6698,9 @@ const formatCurrency = (value) => {
                         <input type="text" id="boqSearchInput" placeholder="Search charging code or name..." value="${boqSearchQuery}" onkeyup="boqSearchQuery = this.value; renderBoqChargingView()" style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;">
                     </div>
                     <div style="display: flex; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-md); overflow: hidden;">
-                        <button class="btn ${currentBoqTab === 'All' ? 'btn-primary' : ''}" onclick="currentBoqTab = 'All'; renderBoqChargingView()" style="border-radius: 0; border: none; ${currentBoqTab === 'All' ? 'background: var(--bg-body); color: var(--text-main); box-shadow: var(--shadow-sm);' : 'background: transparent; color: var(--text-muted);'}">All</button>
-                        <button class="btn ${currentBoqTab === 'Paid' ? 'btn-primary' : ''}" onclick="currentBoqTab = 'Paid'; renderBoqChargingView()" style="border-radius: 0; border: none; ${currentBoqTab === 'Paid' ? 'background: var(--bg-body); color: var(--text-main); box-shadow: var(--shadow-sm);' : 'background: transparent; color: var(--text-muted);'}">Paid</button>
-                        <button class="btn ${currentBoqTab === 'Unpaid' ? 'btn-primary' : ''}" onclick="currentBoqTab = 'Unpaid'; renderBoqChargingView()" style="border-radius: 0; border: none; ${currentBoqTab === 'Unpaid' ? 'background: var(--bg-body); color: var(--text-main); box-shadow: var(--shadow-sm);' : 'background: transparent; color: var(--text-muted);'}">Unpaid</button>
+ <button class="btn ${currentBoqTab === 'All' ? 'btn-primary' : ''}" onclick="setBoqTab('All')" style="border-radius: 0; border: none; ${currentBoqTab === 'All' ? 'background: var(--bg-body); color: var(--text-main); box-shadow: var(--shadow-sm);' : 'background: transparent; color: var(--text-muted);'}">All</button>
+<button class="btn ${currentBoqTab === 'Paid' ? 'btn-primary' : ''}" onclick="setBoqTab('Paid')" style="border-radius: 0; border: none; ${currentBoqTab === 'Paid' ? 'background: var(--bg-body); color: var(--text-main); box-shadow: var(--shadow-sm);' : 'background: transparent; color: var(--text-muted);'}">Paid</button>
+<button class="btn ${currentBoqTab === 'Unpaid' ? 'btn-primary' : ''}" onclick="setBoqTab('Unpaid')" style="border-radius: 0; border: none; ${currentBoqTab === 'Unpaid' ? 'background: var(--bg-body); color: var(--text-main); box-shadow: var(--shadow-sm);' : 'background: transparent; color: var(--text-muted);'}">Unpaid</button>
                     </div>
                     <div style="display: flex; gap: 8px;">
                         <button class="btn btn-secondary" onclick="expandAllBoq()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 4px;"><polyline points="6 9 12 15 18 9"/></svg> Expand All</button>
@@ -6758,7 +6817,7 @@ ${currentBoqTab === 'All' ? `
 
 <td style="padding: 12px 16px; text-align: right; color: ${remaining < 0 ? '#dc2626' : '#14b8a6'}; font-weight: 700;">${formatCurrency(remaining)}</td>
 <td style="padding: 12px 16px; text-align: center;">
-    <button onclick="event.stopPropagation(); editBoqBudget('${item.code}')" style="background: transparent; border: none; cursor: pointer; color: var(--text-muted);" title="Edit Budget">
+    <button onclick="event.stopPropagation(); editBoqBudget('${item.code}', '${String(item.name || '').replace(/'/g, "\\'")}', ${Number(item.budget || 0)})" style="background: transparent; border: none; cursor: pointer; color: var(--text-muted);" title="Edit Budget">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 20h9"/>
             <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>
@@ -6784,7 +6843,7 @@ ${currentBoqTab === 'All' ? `
 
 <td style="padding: 12px 16px; text-align: right; color: ${remaining < 0 ? '#dc2626' : '#14b8a6'}; font-weight: 700;">${formatCurrency(remaining)}</td>
 <td style="padding: 12px 16px; text-align: center;">
-    <button onclick="event.stopPropagation(); editBoqBudget('${item.code}')" style="background: transparent; border: none; cursor: pointer; color: var(--text-muted);" title="Edit Budget">
+    <button onclick="event.stopPropagation(); editBoqBudget('${item.code}', '${String(item.name || '').replace(/'/g, "\\'")}', ${Number(item.budget || 0)})" style="background: transparent; border: none; cursor: pointer; color: var(--text-muted);" title="Edit Budget">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 20h9"/>
             <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/>
@@ -6839,8 +6898,8 @@ if (currentBoqTab === 'Unpaid') {
                                 <span>Remaining: ${formatCurrency(cat.remaining)}</span>
                             </div>
                         </div>
-                        <div style="overflow-x: auto;">
-                            <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; font-family: 'Inter', system-ui, sans-serif;">
+                        <div style="overflow-x: auto; width: 100%; max-width: 100%;">
+                            <table style="width: max-content; min-width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; font-family: 'Inter', system-ui, sans-serif;">
                                 <thead style="background: var(--bg-body);">
     <tr>
         <th style="padding: 12px 16px; font-weight: 600; color: var(--text-muted); border-bottom: 1px solid var(--border-color); min-width: 90px;">CODE</th>
@@ -8597,6 +8656,7 @@ window.loadLocalProcurementFromSupabase = async function() {
         paymentTerms: row.payment_terms,
         ewt: Number(row.ewt || 0),
         actualAmount: Number(row.actual_amount || 0),
+        actual_amount: Number(row.actual_amount || 0),
         paymentNeededDate: row.needed_date,
         paymentReleased: row.payment_released,
         paymentMonth: row.payment_month,
@@ -11760,277 +11820,477 @@ if (typeof closeLocalModal === 'function') {
         }
 
         window.populateExpenseMonthFilter = function() {
-            const filter = document.getElementById('expenseMonthFilter');
-            if (!filter) return;
-            
-            const months = new Set();
-            
-            const processRecords = (records) => {
-                records.forEach(r => {
-                    if (r.projectId === currentProjectId && r.paymentMonth) {
-                        months.add(r.paymentMonth);
-                    }
-                });
-            };
-            
-            processRecords(manilaRecords);
-            processRecords(localRecords);
-            
-            const sortedMonths = Array.from(months).sort((a, b) => {
-                // Format is "Month - Year" e.g. "March - 2026"
-                const getSortable = (str) => {
-                    const parts = str.split(' - ');
-                    if (parts.length !== 2) return str;
-                    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-                    const monthIdx = monthNames.indexOf(parts[0]);
-                    return `${parts[1]}-${monthIdx.toString().padStart(2, '0')}`;
-                };
-                return getSortable(b).localeCompare(getSortable(a));
-            });
-            
-            let options = '<option value="all">All Months</option>';
-            sortedMonths.forEach(m => {
-                options += `<option value="${m}">${m}</option>`;
-            });
-            
-            filter.innerHTML = options;
+    const filter = document.getElementById('expenseMonthFilter');
+    if (!filter) return;
+
+    const months = new Set();
+
+    const getMonth = (record) => String(
+        record.paymentMonth ||
+        record.payment_month ||
+        record.month ||
+        ''
+    ).trim();
+
+    const processRecords = (records) => {
+        (records || []).forEach(r => {
+            const projectId = r.projectId || r.project_id;
+            const month = getMonth(r) || 'Unspecified';
+
+            if (String(projectId) === String(currentProjectId)) {
+                months.add(month);
+            }
+        });
+    };
+
+    processRecords(window.manilaRecords || manilaRecords || []);
+    processRecords(window.localRecords || localRecords || []);
+
+    const sortedMonths = Array.from(months).sort((a, b) => {
+        const getSortable = (str) => {
+            if (String(str) === 'Unspecified') return '0000-00';
+            const parts = String(str).split(' - ');
+            if (parts.length !== 2) return str;
+
+            const monthNames = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ];
+
+            const monthIdx = monthNames.indexOf(parts[0]);
+            return `${parts[1]}-${String(monthIdx + 1).padStart(2, '0')}`;
         };
 
-        window.renderExpenseDashboard = function() {
-            const filterMonth = document.getElementById('expenseMonthFilter')?.value || 'all';
-            
-            const formatDate = (dateStr) => {
-                if (!dateStr) return '-';
-                try {
-                    const date = new Date(dateStr);
-                    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-                    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-                    return `${days[date.getDay()]}, ${String(date.getDate()).padStart(2, '0')} - ${months[date.getMonth()]} - ${date.getFullYear()}`;
-                } catch(e) {
-                    return dateStr;
-                }
-            };
-            
-            let mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId);
-            let lclRecords = localRecords.filter(r => r.projectId === currentProjectId);
-            
-            if (filterMonth !== 'all') {
-                mnlRecords = mnlRecords.filter(r => r.paymentMonth === filterMonth);
-                lclRecords = lclRecords.filter(r => r.paymentMonth === filterMonth);
+        return getSortable(b).localeCompare(getSortable(a));
+    });
+
+    let options = '<option value="all">All Months</option>';
+
+    sortedMonths.forEach(m => {
+        options += `<option value="${m}">${m}</option>`;
+    });
+
+    filter.innerHTML = options;
+};
+
+window.renderExpenseDashboard = function() {
+    const filterMonth = document.getElementById('expenseMonthFilter')?.value || 'all';
+
+    const parseMoney = (value) => {
+        if (value === null || value === undefined || value === '') return 0;
+        if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+
+        const cleaned = String(value)
+            .replace(/₱/g, '')
+            .replace(/,/g, '')
+            .trim();
+
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const getActualAmount = (record) => {
+        // Expense Overview should use ACTUAL AMOUNT, not total cost.
+        return parseMoney(
+            record.actualAmount ??
+            record.actual_amount ??
+            record.actualAmountToPay ??
+            record.actual_amount_to_pay
+        );
+    };
+
+    const getPaymentStatus = (record) => {
+        return String(
+            record.paymentStatus ||
+            record.payment_status ||
+            'Unpaid'
+        ).trim();
+    };
+
+    const getPaymentMonth = (record) => {
+        return String(
+            record.paymentMonth ||
+            record.payment_month ||
+            record.month ||
+            ''
+        ).trim();
+    };
+
+    const getPaymentDate = (record) => {
+        return (
+            record.paymentReleased ||
+            record.payment_released ||
+            record.paymentNeededDate ||
+            record.neededDate ||
+            record.needed_date ||
+            ''
+        );
+    };
+
+    const getCharging = (record) => {
+        return String(
+            record.subtaskCharging ||
+            record.subtask_charging ||
+            record.chargingNoteCode ||
+            record.charging_note_code ||
+            record.boqCharging ||
+            record.boq_charging ||
+            record.charging ||
+            ''
+        ).trim();
+    };
+
+    const getRepleNo = (record) => {
+        return String(
+            record.repleNo ||
+            record.reple_no ||
+            record.localRepleNo ||
+            record.local_reple_no ||
+            ''
+        ).trim();
+    };
+
+    const getRepleCategory = (record) => {
+        return String(
+            record.repleCategory ||
+            record.reple_category ||
+            record.category ||
+            record.localRepleCategory ||
+            record.local_reple_category ||
+            ''
+        ).trim();
+    };
+
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '-';
+
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return dateStr;
+
+            const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+            const months = [
+                'January', 'February', 'March', 'April', 'May', 'June',
+                'July', 'August', 'September', 'October', 'November', 'December'
+            ];
+
+            return `${days[date.getDay()]}, ${String(date.getDate()).padStart(2, '0')} - ${months[date.getMonth()]} - ${date.getFullYear()}`;
+        } catch(e) {
+            return dateStr;
+        }
+    };
+
+    const formatCurrency = (val) => {
+        return '₱' + Number(val || 0).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+    };
+
+    let mnlRecords = (window.manilaRecords || manilaRecords || []).filter(
+        r => String(r.projectId || r.project_id) === String(currentProjectId)
+    );
+
+    let lclRecords = (window.localRecords || localRecords || []).filter(
+        r => String(r.projectId || r.project_id) === String(currentProjectId)
+    );
+
+
+    if (filterMonth !== 'all') {
+        mnlRecords = mnlRecords.filter(r => (getPaymentMonth(r) || 'Unspecified') === filterMonth);
+        lclRecords = lclRecords.filter(r => (getPaymentMonth(r) || 'Unspecified') === filterMonth);
+    }
+
+    let totalPaid = 0;
+    let totalUnpaid = 0;
+
+    const processTotals = (records) => {
+        records.forEach(r => {
+            const amount = getActualAmount(r);
+            const status = getPaymentStatus(r).toLowerCase();
+
+            if (status === 'paid') {
+                totalPaid += amount;
+            } else {
+                totalUnpaid += amount;
             }
-            
-            let totalPaid = 0;
-            let totalUnpaid = 0;
-            
-            const processTotals = (records) => {
-                records.forEach(r => {
-                    const amount = parseFloat(r.totalCost) || 0;
-                    if (r.paymentStatus === 'Paid') {
-                        totalPaid += amount;
-                    } else {
-                        totalUnpaid += amount;
-                    }
-                });
-            };
-            
-            processTotals(mnlRecords);
-            processTotals(lclRecords);
-            
-            const grandTotal = totalPaid + totalUnpaid;
-            
-            // Format currency
-            const formatCurrency = (val) => '₱' + val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            
-            // Render KPIs
-            const kpisHtml = `
-                <div class="card" style="background: #eafff5; border: 1px solid #a7f3d0; display: flex; align-items: center; padding: 20px;">
-                    <div style="width: 48px; height: 48px; border-radius: 12px; background: #00c48c; display: flex; align-items: center; justify-content: center; margin-right: 16px; color: white; flex-shrink: 0;">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
+        });
+    };
+
+    processTotals(mnlRecords);
+    processTotals(lclRecords);
+
+    const grandTotal = totalPaid + totalUnpaid;
+
+    const kpisHtml = `
+        <div class="card" style="background: #eafff5; border: 1px solid #a7f3d0; display: flex; align-items: center; padding: 20px;">
+            <div style="width: 48px; height: 48px; border-radius: 12px; background: #00c48c; display: flex; align-items: center; justify-content: center; margin-right: 16px; color: white; flex-shrink: 0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline><polyline points="16 7 22 7 22 13"></polyline></svg>
+            </div>
+            <div>
+                <div style="color: #008a63; font-size: 0.9rem; font-weight: 500; margin-bottom: 4px;">Total Paid</div>
+                <div style="font-size: 1.75rem; font-weight: 700; color: #004d37;">${formatCurrency(totalPaid)}</div>
+            </div>
+        </div>
+        <div class="card" style="background: var(--badge-bg-red); border: 1px solid var(--badge-bg-red); display: flex; align-items: center; padding: 20px;">
+            <div style="width: 48px; height: 48px; border-radius: 12px; background: #ff4d4f; display: flex; align-items: center; justify-content: center; margin-right: 16px; color: white; flex-shrink: 0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"></polyline><polyline points="16 17 22 17 22 11"></polyline></svg>
+            </div>
+            <div>
+                <div style="color: #cf1322; font-size: 0.9rem; font-weight: 500; margin-bottom: 4px;">Total Unpaid</div>
+                <div style="font-size: 1.75rem; font-weight: 700; color: #820014;">${formatCurrency(totalUnpaid)}</div>
+            </div>
+        </div>
+        <div class="card" style="background: var(--bg-body); border: 1px solid var(--border-color); display: flex; align-items: center; padding: 20px;">
+            <div style="width: 48px; height: 48px; border-radius: 12px; background: var(--badge-text-gray); display: flex; align-items: center; justify-content: center; margin-right: 16px; color: white; flex-shrink: 0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            </div>
+            <div>
+                <div style="color: var(--text-muted); font-size: 0.9rem; font-weight: 500; margin-bottom: 4px;">Grand Total</div>
+                <div style="font-size: 1.75rem; font-weight: 700; color: var(--text-main);">${formatCurrency(grandTotal)}</div>
+            </div>
+        </div>
+    `;
+
+    const kpisContainer = document.getElementById('expenseKpis');
+    if (kpisContainer) kpisContainer.innerHTML = kpisHtml;
+
+    // Budget Summary Table
+    const summaryTableBody = document.getElementById('expenseSummaryTableBody');
+    if (summaryTableBody) {
+        let summaryHtml = '';
+        const monthTotals = {};
+
+        const processMonthTotals = (records) => {
+            records.forEach(r => {
+                const month = getPaymentMonth(r) || 'Unspecified';
+
+                if (!monthTotals[month]) {
+                    monthTotals[month] = { paid: 0, unpaid: 0 };
+                }
+
+                const amount = getActualAmount(r);
+                const status = getPaymentStatus(r).toLowerCase();
+
+                if (status === 'paid') {
+                    monthTotals[month].paid += amount;
+                } else {
+                    monthTotals[month].unpaid += amount;
+                }
+            });
+        };
+
+        processMonthTotals(mnlRecords);
+        processMonthTotals(lclRecords);
+
+        const months = Object.keys(monthTotals);
+
+        if (months.length === 0) {
+    summaryHtml = `
+        <tr>
+            <td colspan="4" style="padding: 24px; text-align: center; color: var(--text-muted);">
+                No records found.
+            </td>
+        </tr>
+    `;
+} else {
+    let summaryPaidTotal = 0;
+    let summaryUnpaidTotal = 0;
+
+    months.forEach(month => {
+        const data = monthTotals[month];
+
+        summaryPaidTotal += data.paid;
+        summaryUnpaidTotal += data.unpaid;
+
+        summaryHtml += `
+            <tr>
+                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${month}</td>
+                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right; color: #00a76f; font-weight: 600;">${formatCurrency(data.paid)}</td>
+                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right; color: #ef4444; font-weight: 600;">${formatCurrency(data.unpaid)}</td>
+                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right; font-weight: 700;">${formatCurrency(data.paid + data.unpaid)}</td>
+            </tr>
+        `;
+    });
+
+    summaryHtml += `
+        <tr style="background: var(--bg-body); font-weight: 800;">
+            <td style="padding: 14px 16px; border-top: 2px solid var(--border-color);">TOTAL</td>
+            <td style="padding: 14px 16px; border-top: 2px solid var(--border-color); text-align: right; color: #00a76f;">${formatCurrency(summaryPaidTotal)}</td>
+            <td style="padding: 14px 16px; border-top: 2px solid var(--border-color); text-align: right; color: #ef4444;">${formatCurrency(summaryUnpaidTotal)}</td>
+            <td style="padding: 14px 16px; border-top: 2px solid var(--border-color); text-align: right;">${formatCurrency(summaryPaidTotal + summaryUnpaidTotal)}</td>
+        </tr>
+    `;
+}
+
+        summaryTableBody.innerHTML = summaryHtml;
+    }
+
+    // Chart
+    const chartContainer = document.getElementById('expenseChartContainer');
+    if (chartContainer) {
+        const maxVal = Math.max(totalPaid, totalUnpaid, 1);
+        const axisMax = Math.ceil(maxVal / 10000) * 10000;
+        const paidPct = Math.min(100, (totalPaid / axisMax) * 100);
+        const unpaidPct = Math.min(100, (totalUnpaid / axisMax) * 100);
+
+        chartContainer.innerHTML = `
+            <div style="position: relative; height: 180px; padding-left: 60px; padding-bottom: 30px;">
+                <div style="position: absolute; top: 0; bottom: 30px; left: 60px; right: 0; display: flex; justify-content: space-between;">
+                    <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
+                    <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
+                    <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
+                    <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
+                    <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
+                    <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
+                    <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
+                </div>
+
+                <div style="position: relative; z-index: 1;">
+                    <div style="display: flex; align-items: center; margin-bottom: 40px;">
+                        <div style="width: 60px; position: absolute; left: -60px; font-size: 0.85rem; color: var(--text-main); text-align: right; padding-right: 12px;">Paid</div>
+                        <div style="flex: 1; height: 40px; position: relative;">
+                            <div style="position: absolute; top: 0; left: 0; height: 100%; width: ${paidPct}%; background: #3b82f6; transition: width 0.5s ease;"></div>
+                        </div>
                     </div>
-                    <div>
-                        <div style="color: #008a63; font-size: 0.9rem; font-weight: 500; margin-bottom: 4px;">Total Paid</div>
-                        <div style="font-size: 1.75rem; font-weight: 700; color: #004d37;">${formatCurrency(totalPaid)}</div>
+                    <div style="display: flex; align-items: center;">
+                        <div style="width: 60px; position: absolute; left: -60px; font-size: 0.85rem; color: var(--text-main); text-align: right; padding-right: 12px;">Unpaid</div>
+                        <div style="flex: 1; height: 40px; position: relative;">
+                            <div style="position: absolute; top: 0; left: 0; height: 100%; width: ${unpaidPct}%; background: #3b82f6; transition: width 0.5s ease;"></div>
+                        </div>
                     </div>
                 </div>
-                <div class="card" style="background: var(--badge-bg-red); border: 1px solid var(--badge-bg-red); display: flex; align-items: center; padding: 20px;">
-                    <div style="width: 48px; height: 48px; border-radius: 12px; background: #ff4d4f; display: flex; align-items: center; justify-content: center; margin-right: 16px; color: white; flex-shrink: 0;">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"></polyline><polyline points="16 17 22 17 22 11"></polyline></svg>
-                    </div>
-                    <div>
-                        <div style="color: #cf1322; font-size: 0.9rem; font-weight: 500; margin-bottom: 4px;">Total Unpaid</div>
-                        <div style="font-size: 1.75rem; font-weight: 700; color: #820014;">${formatCurrency(totalUnpaid)}</div>
-                    </div>
+
+                <div style="position: absolute; bottom: 0; left: 60px; right: 0; display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);">
+                    <span style="transform: translateX(-50%);">0</span>
+                    <span style="transform: translateX(-50%);">${(axisMax / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                    <span style="transform: translateX(-50%);">${(axisMax * 2 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                    <span style="transform: translateX(-50%);">${(axisMax * 3 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                    <span style="transform: translateX(-50%);">${(axisMax * 4 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                    <span style="transform: translateX(-50%);">${(axisMax * 5 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                    <span style="transform: translateX(-50%);">${axisMax.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
                 </div>
-                <div class="card" style="background: var(--bg-body); border: 1px solid var(--border-color); display: flex; align-items: center; padding: 20px;">
-                    <div style="width: 48px; height: 48px; border-radius: 12px; background: var(--badge-text-gray); display: flex; align-items: center; justify-content: center; margin-right: 16px; color: white; flex-shrink: 0;">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                    </div>
-                    <div>
-                        <div style="color: var(--text-muted); font-size: 0.9rem; font-weight: 500; margin-bottom: 4px;">Grand Total</div>
-                        <div style="font-size: 1.75rem; font-weight: 700; color: var(--text-main);">${formatCurrency(grandTotal)}</div>
-                    </div>
-                </div>
-            `;
-            
-            const kpisContainer = document.getElementById('expenseKpis');
-            if (kpisContainer) kpisContainer.innerHTML = kpisHtml;
-            
-            // Summary Table
-            const summaryTableBody = document.getElementById('expenseSummaryTableBody');
-            if (summaryTableBody) {
-                let summaryHtml = '';
-                
-                // Group by month
-                const monthTotals = {};
-                const processMonthTotals = (records) => {
-                    records.forEach(r => {
-                        const month = r.paymentMonth || 'Unspecified';
-                        if (!monthTotals[month]) monthTotals[month] = { paid: 0, unpaid: 0 };
-                        const amount = parseFloat(r.totalCost) || 0;
-                        if (r.paymentStatus === 'Paid') {
-                            monthTotals[month].paid += amount;
-                        } else {
-                            monthTotals[month].unpaid += amount;
-                        }
-                    });
-                };
-                
-                processMonthTotals(mnlRecords);
-                processMonthTotals(lclRecords);
-                
-                Object.keys(monthTotals).forEach(month => {
-                    const data = monthTotals[month];
-                    const total = data.paid + data.unpaid;
-                    summaryHtml += `
-                        <tr>
-                            <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${month}</td>
-                            <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right;">${formatCurrency(data.paid)}</td>
-                            <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right;">${formatCurrency(data.unpaid)}</td>
-                            <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right; font-weight: 600;">${formatCurrency(total)}</td>
-                        </tr>
-                    `;
-                });
-                
-                // Add Total row
-                summaryHtml += `
-                    <tr style="background: var(--bg-surface); font-weight: 700;">
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">TOTAL</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right;">${formatCurrency(totalPaid)}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right;">${formatCurrency(totalUnpaid)}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-align: right;">${formatCurrency(grandTotal)}</td>
+            </div>
+        `;
+    }
+
+    // Manila Table
+    const manilaTableBody = document.getElementById('expenseManilaTableBody');
+    if (manilaTableBody) {
+        let mnlHtml = '';
+
+        if (mnlRecords.length === 0) {
+            mnlHtml = '<tr><td colspan="9" style="padding: 24px; text-align: center; color: var(--text-muted);">No records found.</td></tr>';
+        } else {
+            mnlRecords.forEach(r => {
+                const prs = (window.prsRecords || prsRecords || []).find(p => String(p.id) === String(r.prsId || r.request_id));
+                const itemDesc = prs ? prs.description : (r.item || r.item_particulars || 'Unknown Item');
+                const status = getPaymentStatus(r);
+
+                mnlHtml += `
+                    <tr>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${itemDesc}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.supplier || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatDate(getPaymentDate(r))}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${getPaymentMonth(r) || 'Unspecified'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatCurrency(getActualAmount(r))}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.paymentTerms || r.payment_terms || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${getCharging(r) || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span class="badge ${status.toLowerCase() === 'paid' ? 'badge-success' : 'badge-warning'}">${status}</span></td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.remarks || '-'}</td>
                     </tr>
                 `;
-                
-                summaryTableBody.innerHTML = summaryHtml;
+            });
+        }
+
+        manilaTableBody.innerHTML = mnlHtml;
+    }
+
+    // Local Table - group same Reple No. into one row
+    const localTableBody = document.getElementById('expenseLocalTableBody');
+    if (localTableBody) {
+        let lclHtml = '';
+
+        const groupedLocalRecords = {};
+
+        lclRecords.forEach(r => {
+            const repleNo = getRepleNo(r) || 'No Reple No.';
+            const category = getRepleCategory(r) || '-';
+            const status = getPaymentStatus(r);
+            const month = getPaymentMonth(r);
+            const key = `${repleNo}||${status.toLowerCase()}`;
+
+            if (!groupedLocalRecords[key]) {
+                groupedLocalRecords[key] = {
+                    repleNo,
+                    categories: new Set(),
+                    paymentDates: [],
+                    months: new Set(),
+                    actualAmount: 0,
+                    paymentTerms: new Set(),
+                    chargings: new Set(),
+                    paymentStatus: status,
+                    remarks: new Set()
+                };
             }
-            
-            // Chart
-            const chartContainer = document.getElementById('expenseChartContainer');
-            if (chartContainer) {
-                const maxVal = Math.max(totalPaid, totalUnpaid, 1); // Avoid division by zero
-                // Round up to nearest nice number for axis
-                const axisMax = Math.ceil(maxVal / 2500) * 2500;
-                const paidPct = (totalPaid / axisMax) * 100;
-                const unpaidPct = (totalUnpaid / axisMax) * 100;
-                
-                chartContainer.innerHTML = `
-                    <div style="position: relative; padding-bottom: 30px; padding-left: 60px; min-height: 200px; display: flex; flex-direction: column; justify-content: center;">
-                        <!-- Grid lines -->
-                        <div style="position: absolute; top: 0; bottom: 30px; left: 60px; right: 0; display: flex; justify-content: space-between;">
-                            <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
-                            <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
-                            <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
-                            <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
-                            <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
-                            <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
-                            <div style="border-left: 1px solid var(--border-color); height: 100%;"></div>
-                        </div>
-                        
-                        <!-- Bars -->
-                        <div style="position: relative; z-index: 1;">
-                            <div style="display: flex; align-items: center; margin-bottom: 40px;">
-                                <div style="width: 60px; position: absolute; left: -60px; font-size: 0.85rem; color: var(--text-main); text-align: right; padding-right: 12px;">Paid</div>
-                                <div style="flex: 1; height: 40px; position: relative;">
-                                    <div style="position: absolute; top: 0; left: 0; height: 100%; width: ${paidPct}%; background: #3b82f6; transition: width 0.5s ease;"></div>
-                                </div>
-                            </div>
-                            <div style="display: flex; align-items: center;">
-                                <div style="width: 60px; position: absolute; left: -60px; font-size: 0.85rem; color: var(--text-main); text-align: right; padding-right: 12px;">Unpaid</div>
-                                <div style="flex: 1; height: 40px; position: relative;">
-                                    <div style="position: absolute; top: 0; left: 0; height: 100%; width: ${unpaidPct}%; background: #3b82f6; transition: width 0.5s ease;"></div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- X Axis Labels -->
-                        <div style="position: absolute; bottom: 0; left: 60px; right: 0; display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted);">
-                            <span style="transform: translateX(-50%);">0</span>
-                            <span style="transform: translateX(-50%);">${(axisMax / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                            <span style="transform: translateX(-50%);">${(axisMax * 2 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                            <span style="transform: translateX(-50%);">${(axisMax * 3 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                            <span style="transform: translateX(-50%);">${(axisMax * 4 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                            <span style="transform: translateX(-50%);">${(axisMax * 5 / 6).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                            <span style="transform: translateX(-50%);">${axisMax.toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
-                        </div>
-                    </div>
+
+            const group = groupedLocalRecords[key];
+
+            if (category && category !== '-') group.categories.add(category);
+
+            const paymentDate = getPaymentDate(r);
+            if (paymentDate) group.paymentDates.push(paymentDate);
+
+            group.months.add(month || 'Unspecified');
+
+            group.actualAmount += getActualAmount(r);
+
+            const terms = String(r.paymentTerms || r.payment_terms || '').trim();
+            if (terms) group.paymentTerms.add(terms);
+
+            const charging = getCharging(r);
+            if (charging) group.chargings.add(charging);
+
+            const remark = String(r.concerns || r.remarks || '').trim();
+            if (remark) group.remarks.add(remark);
+        });
+
+        const groupedRows = Object.values(groupedLocalRecords);
+
+        if (groupedRows.length === 0) {
+            lclHtml = '<tr><td colspan="9" style="padding: 24px; text-align: center; color: var(--text-muted);">No records found.</td></tr>';
+        } else {
+            groupedRows.forEach(group => {
+                const sortedDates = group.paymentDates
+                    .map(d => new Date(d))
+                    .filter(d => !isNaN(d.getTime()))
+                    .sort((a, b) => b - a);
+
+                const displayDate = sortedDates.length
+                    ? formatDate(sortedDates[0].toISOString())
+                    : '-';
+
+                const status = group.paymentStatus;
+
+                lclHtml += `
+                    <tr>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${group.repleNo || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${Array.from(group.categories).join(', ') || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${displayDate}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${Array.from(group.months).join(', ') || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 700;">${formatCurrency(group.actualAmount)}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${Array.from(group.paymentTerms).join(', ') || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${Array.from(group.chargings).join('<br>') || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span class="badge ${status.toLowerCase() === 'paid' ? 'badge-success' : 'badge-warning'}">${status}</span></td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${Array.from(group.remarks).join('<br>') || '-'}</td>
+                    </tr>
                 `;
-            }
-            
-            // Manila Table
-            const manilaTableBody = document.getElementById('expenseManilaTableBody');
-            if (manilaTableBody) {
-                let mnlHtml = '';
-                if (mnlRecords.length === 0) {
-                    mnlHtml = '<tr><td colspan="9" style="padding: 24px; text-align: center; color: var(--text-muted);">No records found.</td></tr>';
-                } else {
-                    mnlRecords.forEach(r => {
-                        const prs = prsRecords.find(p => p.id === r.prsId);
-                        const itemDesc = prs ? prs.description : 'Unknown Item';
-                        
-                        mnlHtml += `
-                            <tr>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${itemDesc}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.supplier || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatDate(r.paymentReleased || r.paymentNeededDate)}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.paymentMonth || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatCurrency(r.actualAmount)}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.paymentTerms || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.subtaskCharging || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span class="badge ${r.paymentStatus === 'Paid' ? 'badge-success' : 'badge-warning'}">${r.paymentStatus}</span></td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.remarks || '-'}</td>
-                            </tr>
-                        `;
-                    });
-                }
-                manilaTableBody.innerHTML = mnlHtml;
-            }
-            
-            // Local Table
-            const localTableBody = document.getElementById('expenseLocalTableBody');
-            if (localTableBody) {
-                let lclHtml = '';
-                if (lclRecords.length === 0) {
-                    lclHtml = '<tr><td colspan="9" style="padding: 24px; text-align: center; color: var(--text-muted);">No records found.</td></tr>';
-                } else {
-                    lclRecords.forEach(r => {
-                        lclHtml += `
-                            <tr>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.repleNo || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.repleCategory || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatDate(r.paymentReleased || r.paymentNeededDate)}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.paymentMonth || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatCurrency(r.actualAmount)}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.paymentTerms || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.subtaskCharging || r.boqCharging || '-'}</td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span class="badge ${r.paymentStatus === 'Paid' ? 'badge-success' : 'badge-warning'}">${r.paymentStatus}</span></td>
-                                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.concerns || '-'}</td>
-                            </tr>
-                        `;
-                    });
-                }
-                localTableBody.innerHTML = lclHtml;
-            }
-        };
+            });
+        }
+
+        localTableBody.innerHTML = lclHtml;
+    }
+};
 
         window.setMaterialsTab = function(tab) {
             currentMaterialsTab = tab;
