@@ -385,19 +385,6 @@
                                     <label style="font-weight: 600; font-size: 0.85rem;">Date Delivered</label>
                                     <input type="date" id="manilaDateDelivered" onchange="calculateManilaDaysDelayed(); updateManilaStatus()">
                                 </div>
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                                    <div class="form-group">
-                                        <label style="font-weight: 600; font-size: 0.85rem;">Days Delayed</label>
-                                        <input type="number" id="manilaDaysDelayed" readonly style="background: var(--bg-surface);">
-                                    </div>
-                                    <div class="form-group">
-                                        <label style="font-weight: 600; font-size: 0.85rem;">Status</label>
-                                        <select id="manilaProcurementStatus" disabled style="background: var(--bg-surface); cursor: not-allowed;">
-                                            <option value="Undelivered">Undelivered</option>
-                                            <option value="Delivered">Delivered</option>
-                                        </select>
-                                    </div>
-                                </div>
                             </div>
                             
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
@@ -649,23 +636,6 @@
                                 <label style="font-weight: 600; font-size: 0.85rem;">Date Delivered</label>
                                 <input type="date" id="localDateDelivered" onchange="calculateLocalDaysDelayed(); updateLocalStatus()">
                             </div>
-                            </div>
-                            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px;">
-                                <div class="form-group">
-                                    <label style="font-weight: 600; font-size: 0.85rem;">Days Delayed</label>
-                                    <input type="number" id="localDaysDelayed" readonly style="background: var(--bg-surface);">
-                                </div>
-                                <div class="form-group">
-                                    <label style="font-weight: 600; font-size: 0.85rem;">Procurement Status</label>
-                                    <select id="localProcurementStatus" disabled style="background: var(--bg-surface); cursor: not-allowed;">
-                                        <option value="Undelivered">Undelivered</option>
-                                        <option value="Delivered">Delivered</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label style="font-weight: 600; font-size: 0.85rem;">Current Department</label>
-                                    <input type="text" id="localCurrentDept">
-                                </div>
                             </div>
                         </div>
                         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 24px;">
@@ -8748,31 +8718,6 @@ window.recalculateMaterialStocksLocally = function() {
     window.materialsMasterlist = materialsMasterlist;
 };
 
-window.filterMaterialsTransactionsTable = function() {
-    const searchInput = document.getElementById('materialsTransactionSearch');
-    const typeFilter = document.getElementById('materialsTransactionTypeFilter');
-    const table = document.getElementById('materialsTransactionsTable');
-
-    if (!table) return;
-
-    const search = String(searchInput?.value || '').trim().toLowerCase();
-    const type = String(typeFilter?.value || '').trim().toUpperCase();
-
-    const rows = table.querySelectorAll('tbody tr');
-
-    rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        const rowType = Array.from(row.querySelectorAll('td'))
-            .map(td => td.textContent.trim().toUpperCase())
-            .find(value => value === 'IN' || value === 'OUT') || '';
-
-        const matchesSearch = !search || text.includes(search);
-        const matchesType = !type || rowType === type;
-
-        row.style.display = matchesSearch && matchesType ? '' : 'none';
-    });
-};
-
 window.loadMaterialsMasterlistFromSupabase = async function() {
     const projectId = window.currentProjectId || currentProjectId;
 
@@ -13480,24 +13425,6 @@ window.filterMaterialsMasterlistTable = function() {
     });
 };
 
-window.filterMaterialsTransactionsTable = function() {
-    const searchValue = window.materialsNormalizeText(document.getElementById('materialsTransactionSearch')?.value || '');
-    const departmentFilter = window.materialsSafeValue(document.getElementById('materialsTransactionDepartmentFilter')?.value || '');
-    const typeFilter = window.materialsSafeValue(document.getElementById('materialsTransactionTypeFilter')?.value || '');
-    const table = document.getElementById('materialsTransactionsTable');
-    if (!table) return;
-
-    table.querySelectorAll('tbody tr').forEach(row => {
-        const rowText = window.materialsNormalizeText(row.textContent);
-        const rowDepartment = window.materialsSafeValue(row.dataset.department);
-        const rowType = window.materialsSafeValue(row.dataset.type);
-        const matchesSearch = !searchValue || rowText.includes(searchValue);
-        const matchesDepartment = !departmentFilter || rowDepartment === departmentFilter;
-        const matchesType = !typeFilter || rowType === typeFilter;
-        row.style.display = matchesSearch && matchesDepartment && matchesType ? '' : 'none';
-    });
-};
-
 window.renderMaterialsView = function() {
     const projectId = window.currentProjectId || currentProjectId;
 
@@ -14727,20 +14654,6 @@ document.addEventListener('fullscreenchange', () => {
         });
     };
 
-    window.filterMaterialsTransactionsTable = function() {
-        const search = normText(document.getElementById('materialsTransactionSearch')?.value || '');
-        const department = clean(document.getElementById('materialsTransactionDepartmentFilter')?.value || '');
-        const type = clean(document.getElementById('materialsTransactionTypeFilter')?.value || '');
-        const table = document.getElementById('materialsTransactionsTable');
-        if (!table) return;
-        table.querySelectorAll('tbody tr').forEach(row => {
-            const rowText = normText(row.textContent);
-            const rowDepartment = clean(row.dataset.department);
-            const rowType = clean(row.dataset.type);
-            row.style.display = (!search || rowText.includes(search)) && (!department || rowDepartment === department) && (!type || rowType === type) ? '' : 'none';
-        });
-    };
-
     const oldRenderMaterialsView = window.renderMaterialsView;
     if (typeof oldRenderMaterialsView === 'function') {
         window.renderMaterialsView = function patchedRenderMaterialsView() {
@@ -15170,27 +15083,6 @@ document.addEventListener('fullscreenchange', () => {
         });
     };
 
-    window.filterMaterialsTransactionsTable = function patchedFilterMaterialsTransactionsTable() {
-        window.repairMaterialsTransactionFilterData?.();
-
-        const search = normalizeText(document.getElementById('materialsTransactionSearch')?.value || '');
-        const departmentFilter = normalizeDepartment(document.getElementById('materialsTransactionDepartmentFilter')?.value || '');
-        const typeFilter = normalizeType(document.getElementById('materialsTransactionTypeFilter')?.value || '');
-        const table = document.getElementById('materialsTransactionsTable');
-        if (!table) return;
-
-        table.querySelectorAll('tbody tr').forEach(row => {
-            const rowText = normalizeText(row.textContent + ' ' + (row.dataset.itemCode || '') + ' ' + (row.dataset.itemName || ''));
-            const rowDepartment = normalizeDepartment(row.dataset.department || '');
-            const rowType = normalizeType(row.dataset.type || '');
-
-            const matchesSearch = !search || rowText.includes(search);
-            const matchesDepartment = !departmentFilter || rowDepartment === departmentFilter;
-            const matchesType = !typeFilter || rowType === typeFilter;
-
-            row.style.display = matchesSearch && matchesDepartment && matchesType ? '' : 'none';
-        });
-    };
 
     const previousRenderMaterialsView = window.renderMaterialsView;
     if (typeof previousRenderMaterialsView === 'function') {
@@ -15543,42 +15435,6 @@ document.addEventListener('fullscreenchange', () => {
             if (cells[13] && materialType) cells[13].textContent = materialType;
         });
     }
-
-    window.filterMaterialsTransactionsTable = function () {
-    const normalize = (value) => String(value || '')
-        .toLowerCase()
-        .replace(/\s+/g, ' ')
-        .replace(/[\n\r]/g, ' ')
-        .replace(/[^a-z0-9]+/g, '')
-        .trim();
-
-    const searchValue = (document.getElementById('materialsTransactionSearch')?.value || '')
-        .toLowerCase()
-        .trim();
-
-    const selectedType = normalize(document.getElementById('materialsTransactionTypeFilter')?.value || '');
-
-    const table = document.getElementById('materialsTransactionsTable');
-    if (!table) return;
-
-    const headers = Array.from(table.querySelectorAll('thead th'))
-        .map(th => th.textContent.trim().toLowerCase());
-
-    const typeColumnIndex = headers.findIndex(h => h === 'type');
-
-    table.querySelectorAll('tbody tr').forEach(row => {
-        const rowText = row.textContent.toLowerCase();
-
-        const actualType = typeColumnIndex >= 0 && row.children[typeColumnIndex]
-            ? normalize(row.children[typeColumnIndex].textContent)
-            : '';
-
-        const matchesSearch = !searchValue || rowText.includes(searchValue);
-        const matchesType = !selectedType || actualType === selectedType;
-
-        row.style.display = matchesSearch && matchesType ? '' : 'none';
-    });
-};
 
     document.addEventListener('change', function(event) {
         if (event.target?.id === 'materialsTransactionTypeFilter') {
