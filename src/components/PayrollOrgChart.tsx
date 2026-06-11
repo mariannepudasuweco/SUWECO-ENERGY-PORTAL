@@ -1,5 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Camera, Grip, Link2, Palette, RotateCcw, Save, Trash2, Users } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Building2,
+  Grip,
+  HardHat,
+  Link2,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Save,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  Users,
+  UserRound,
+  Wrench,
+  X,
+  Zap,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../lib/supabaseClient';
 
@@ -8,209 +28,337 @@ type PayrollOrgChartProps = {
   projectId?: string | null;
 };
 
-type OrgNode = {
+type OrgAssignment = {
   id: string;
   employeeId: string;
-  x: number;
-  y: number;
-  color: string;
-  photoUrl?: string;
+  description: string;
+  photoUrl: string;
 };
 
 type OrgConnector = {
   id: string;
-  parentEmployeeId: string;
-  childEmployeeId: string;
-  color?: string;
+  fromSectionId: string;
+  toSectionId: string;
+};
+
+type OrgSection = {
+  id: string;
+  title: string;
+  accentColor: string;
+  x: number;
+  y: number;
+  width: number;
+  maxEmployees?: number;
+  assignments: OrgAssignment[];
+};
+
+type OrgChartLayout = {
+  sections: OrgSection[];
+  connectors: OrgConnector[];
+  updatedAt?: string;
+};
+
+type ConnectorPath = {
+  id: string;
+  path: string;
 };
 
 type DragState = {
-  employeeId: string;
+  sectionId: string;
+  startPointerX: number;
+  startPointerY: number;
   startX: number;
   startY: number;
-  originX: number;
-  originY: number;
 };
 
-const DEFAULT_NODE_COLOR = '#2563eb';
-const DEFAULT_CONNECTOR_COLOR = '#475569';
-const CANVAS_HEIGHT = 620;
-const CARD_WIDTH = 230;
-const CARD_HEIGHT = 118;
+const DARK_BLUE = '#061a44';
+const BLUE = '#2563eb';
+const WHITE = '#ffffff';
+const TEXT = '#111827';
+const MUTED = '#64748b';
+const YELLOW = '#facc15';
 
-const getEmployeeId = (employee: any) => String(employee?.id || employee?.employee_id || employee?.employeeId || '');
+const CANVAS_WIDTH = 1700;
+const CANVAS_HEIGHT = 900;
+
+const DEFAULT_SECTIONS: Array<Omit<OrgSection, 'assignments'>> = [
+  {
+    id: 'coordinators',
+    title: 'Coordinators',
+    accentColor: BLUE,
+    x: 40,
+    y: 50,
+    width: 315,
+  },
+  {
+    id: 'project_manager',
+    title: 'Project Manager',
+    accentColor: DARK_BLUE,
+    x: 470,
+    y: 40,
+    width: 430,
+    maxEmployees: 1,
+  },
+  {
+    id: 'deputy_project_manager',
+    title: 'Deputy Project Manager',
+    accentColor: BLUE,
+    x: 470,
+    y: 170,
+    width: 430,
+    maxEmployees: 1,
+  },
+  {
+    id: 'civil_team',
+    title: 'Civil Team',
+    accentColor: BLUE,
+    x: 40,
+    y: 520,
+    width: 300,
+  },
+  {
+    id: 'electrical_team',
+    title: 'Electrical Team',
+    accentColor: BLUE,
+    x: 375,
+    y: 520,
+    width: 300,
+  },
+  {
+    id: 'mechanical_team',
+    title: 'Mechanical Team',
+    accentColor: BLUE,
+    x: 710,
+    y: 520,
+    width: 300,
+  },
+  {
+    id: 'admin_team',
+    title: 'Admin Team',
+    accentColor: BLUE,
+    x: 1045,
+    y: 520,
+    width: 300,
+  },
+  {
+    id: 'safety_security_team',
+    title: 'Safety & Security Team',
+    accentColor: BLUE,
+    x: 1380,
+    y: 520,
+    width: 300,
+  },
+];
+
+const getEmployeeId = (employee: any) =>
+  String(employee?.id || employee?.employee_id || employee?.employeeId || '');
 
 const getEmployeeName = (employee: any) => {
-  const name = employee?.name || [employee?.first_name || employee?.firstName, employee?.middle_name || employee?.middleName, employee?.surname || employee?.last_name].filter(Boolean).join(' ');
+  const name =
+    employee?.name ||
+    employee?.employee_name ||
+    [
+      employee?.first_name || employee?.firstName,
+      employee?.middle_name || employee?.middleName,
+      employee?.surname || employee?.last_name || employee?.lastName,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
   return String(name || 'Unnamed Employee').trim();
 };
 
-const getEmployeePosition = (employee: any) => String(employee?.position || employee?.designation || 'Position not set');
-const getEmployeeDepartment = (employee: any) => String(employee?.department || employee?.location || '');
+const getEmployeePosition = (employee: any) =>
+  String(employee?.position || employee?.designation || employee?.job_title || 'Position not set');
 
-const getLevelRank = (employee: any) => {
-  const text = `${employee?.level || ''} ${employee?.position || ''} ${employee?.designation || ''}`.toUpperCase();
-  if (text.includes('PRESIDENT') || text.includes('CEO') || text.includes('OWNER') || text.includes('EXEC')) return 0;
-  if (text.includes('PROJECT MANAGER') || text.includes('MANAGER') || text.includes('SUPERVISOR') || text.includes('HEAD')) return 1;
-  if (text.includes('COORDINATOR') || text.includes('ENGINEER') || text.includes('ADMIN') || text.includes('OFFICER') || text.includes('HR')) return 2;
-  return 3;
-};
+const getEmployeePhoto = (employee: any) =>
+  String(employee?.photo_url || employee?.photoUrl || employee?.image_url || '');
 
-const makeConnectorId = (parentEmployeeId: string, childEmployeeId: string) => `connector-${parentEmployeeId}-${childEmployeeId}`;
-
-const buildDefaultNodes = (employees: any[]): OrgNode[] => {
-  const sorted = [...employees].sort((a, b) => {
-    const rankDiff = getLevelRank(a) - getLevelRank(b);
-    if (rankDiff !== 0) return rankDiff;
-    return getEmployeeName(a).localeCompare(getEmployeeName(b));
-  });
-
-  const rows = new Map<number, any[]>();
-  sorted.forEach((employee) => {
-    const rank = getLevelRank(employee);
-    rows.set(rank, [...(rows.get(rank) || []), employee]);
-  });
-
-  const nodes: OrgNode[] = [];
-  Array.from(rows.entries()).forEach(([rank, rowEmployees]) => {
-    const rowY = 28 + rank * 145;
-    const totalWidth = rowEmployees.length * CARD_WIDTH + Math.max(rowEmployees.length - 1, 0) * 32;
-    const startX = Math.max(24, 560 - totalWidth / 2);
-
-    rowEmployees.forEach((employee, index) => {
-      const employeeId = getEmployeeId(employee);
-      if (!employeeId) return;
-      nodes.push({
-        id: `node-${employeeId}`,
-        employeeId,
-        x: startX + index * (CARD_WIDTH + 32),
-        y: rowY,
-        color: DEFAULT_NODE_COLOR,
-        photoUrl: employee?.photo_url || employee?.photoUrl || ''
-      });
-    });
-  });
-
-  return nodes;
-};
-
-const buildDefaultConnectors = (nodes: OrgNode[], employees: any[]): OrgConnector[] => {
-  const employeesById = new Map(employees.map((employee) => [getEmployeeId(employee), employee]));
-  const byRank = new Map<number, OrgNode[]>();
-
-  nodes.forEach((node) => {
-    const employee = employeesById.get(node.employeeId);
-    const rank = getLevelRank(employee);
-    byRank.set(rank, [...(byRank.get(rank) || []), node]);
-  });
-
-  const connectors: OrgConnector[] = [];
-  const ranks = Array.from(byRank.keys()).sort((a, b) => a - b);
-
-  ranks.forEach((rank, index) => {
-    const parents = byRank.get(rank) || [];
-    const children = byRank.get(ranks[index + 1]) || [];
-    if (!parents.length || !children.length) return;
-
-    const parent = parents[Math.floor(parents.length / 2)];
-    children.forEach((child) => {
-      connectors.push({
-        id: makeConnectorId(parent.employeeId, child.employeeId),
-        parentEmployeeId: parent.employeeId,
-        childEmployeeId: child.employeeId,
-        color: DEFAULT_CONNECTOR_COLOR
-      });
-    });
-  });
-
-  return connectors;
-};
-
-const mergeNodesWithEmployees = (savedNodes: OrgNode[], employees: any[]): OrgNode[] => {
-  const validEmployeeIds = new Set(employees.map(getEmployeeId).filter(Boolean));
-  const defaults = buildDefaultNodes(employees);
-  const defaultMap = new Map(defaults.map((node) => [node.employeeId, node]));
-  const savedMap = new Map((savedNodes || []).filter((node) => validEmployeeIds.has(String(node.employeeId))).map((node) => [String(node.employeeId), node]));
-
-  return employees
-    .map(getEmployeeId)
+const getInitials = (name: string) =>
+  name
+    .split(' ')
     .filter(Boolean)
-    .map((employeeId) => ({
-      ...(defaultMap.get(employeeId) || { id: `node-${employeeId}`, employeeId, x: 24, y: 24, color: DEFAULT_NODE_COLOR }),
-      ...(savedMap.get(employeeId) || {})
-    }));
+    .map((part) => part[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
+const isManagerSection = (sectionId: string) =>
+  sectionId === 'project_manager' || sectionId === 'deputy_project_manager';
+
+const isFixedTitleSection = (sectionId: string) =>
+  sectionId === 'coordinators' ||
+  sectionId === 'civil_team' ||
+  sectionId === 'electrical_team' ||
+  sectionId === 'mechanical_team' ||
+  sectionId === 'admin_team' ||
+  sectionId === 'safety_security_team';
+
+const makeAssignmentId = (employeeId: string, sectionId: string) => `${sectionId}-${employeeId}`;
+
+const makeAssignment = (employee: any, sectionId: string): OrgAssignment => {
+  const employeeId = getEmployeeId(employee);
+
+  return {
+    id: makeAssignmentId(employeeId, sectionId),
+    employeeId,
+    description: '',
+    photoUrl: getEmployeePhoto(employee) || '',
+  };
 };
 
-const mergeConnectorsWithEmployees = (savedConnectors: OrgConnector[], nodes: OrgNode[], employees: any[]): OrgConnector[] => {
+const createEmptyLayout = (): OrgChartLayout => ({
+  sections: DEFAULT_SECTIONS.map((section) => ({
+    ...section,
+    assignments: [],
+  })),
+  connectors: [],
+  updatedAt: new Date().toISOString(),
+});
+
+const normalizeLayout = (
+  savedLayout: Partial<OrgChartLayout> | null | undefined,
+  employees: any[]
+): OrgChartLayout => {
   const validEmployeeIds = new Set(employees.map(getEmployeeId).filter(Boolean));
-  const cleaned = (savedConnectors || []).filter((connector) => {
-    return (
-      validEmployeeIds.has(String(connector.parentEmployeeId)) &&
-      validEmployeeIds.has(String(connector.childEmployeeId)) &&
-      String(connector.parentEmployeeId) !== String(connector.childEmployeeId)
-    );
+  const validSectionIds = new Set(DEFAULT_SECTIONS.map((section) => section.id));
+  const savedSections = Array.isArray(savedLayout?.sections) ? savedLayout.sections : [];
+  const savedSectionMap = new Map(savedSections.map((section) => [section.id, section]));
+  const usedEmployeeIds = new Set<string>();
+
+  const sections = DEFAULT_SECTIONS.map((defaultSection) => {
+    const savedSection = savedSectionMap.get(defaultSection.id);
+    const savedAssignments = Array.isArray(savedSection?.assignments)
+      ? savedSection.assignments
+      : [];
+
+    const assignments = savedAssignments
+      .filter((assignment) => {
+        const employeeId = String(assignment.employeeId);
+        if (!validEmployeeIds.has(employeeId)) return false;
+        if (usedEmployeeIds.has(employeeId)) return false;
+        return true;
+      })
+      .slice(0, defaultSection.maxEmployees || undefined)
+      .map((assignment) => {
+        const employeeId = String(assignment.employeeId);
+        const employee = employees.find((item) => getEmployeeId(item) === employeeId);
+
+        usedEmployeeIds.add(employeeId);
+
+        return {
+          id: assignment.id || makeAssignmentId(employeeId, defaultSection.id),
+          employeeId,
+          description: assignment.description || '',
+          photoUrl: assignment.photoUrl || getEmployeePhoto(employee) || '',
+        };
+      });
+
+    return {
+      ...defaultSection,
+      accentColor:
+        (savedSection as any)?.accentColor ||
+        (savedSection as any)?.boxColor ||
+        (savedSection as any)?.headerColor ||
+        defaultSection.accentColor,
+      x: Number.isFinite((savedSection as any)?.x)
+        ? Number((savedSection as any).x)
+        : defaultSection.x,
+      y: Number.isFinite((savedSection as any)?.y)
+        ? Number((savedSection as any).y)
+        : defaultSection.y,
+      width: Number.isFinite((savedSection as any)?.width)
+        ? Number((savedSection as any).width)
+        : defaultSection.width,
+      assignments,
+    };
   });
 
-  if (cleaned.length) {
-    return cleaned.map((connector) => ({
-      id: connector.id || makeConnectorId(String(connector.parentEmployeeId), String(connector.childEmployeeId)),
-      parentEmployeeId: String(connector.parentEmployeeId),
-      childEmployeeId: String(connector.childEmployeeId),
-      color: connector.color || DEFAULT_CONNECTOR_COLOR
-    }));
-  }
+  const savedConnectors = Array.isArray(savedLayout?.connectors) ? savedLayout.connectors : [];
 
-  return buildDefaultConnectors(nodes, employees);
+  const connectors = savedConnectors.filter((connector: any) => {
+    const fromSectionId = String(connector.fromSectionId || '');
+    const toSectionId = String(connector.toSectionId || '');
+
+    if (!validSectionIds.has(fromSectionId)) return false;
+    if (!validSectionIds.has(toSectionId)) return false;
+    if (fromSectionId === toSectionId) return false;
+
+    return true;
+  });
+
+  return {
+    sections,
+    connectors,
+    updatedAt: savedLayout?.updatedAt || new Date().toISOString(),
+  };
+};
+
+const getSectionIcon = (sectionId: string, color = BLUE) => {
+  if (sectionId === 'coordinators') return <Users size={24} style={{ color }} />;
+  if (sectionId === 'civil_team') return <HardHat size={24} style={{ color }} />;
+  if (sectionId === 'electrical_team') return <Zap size={24} style={{ color }} />;
+  if (sectionId === 'mechanical_team') return <Wrench size={24} style={{ color }} />;
+  if (sectionId === 'admin_team') return <Building2 size={24} style={{ color }} />;
+  if (sectionId === 'safety_security_team') return <ShieldCheck size={24} style={{ color }} />;
+
+  return <Users size={24} style={{ color }} />;
 };
 
 export default function PayrollOrgChart({ employees, projectId }: PayrollOrgChartProps) {
-  const [nodes, setNodes] = useState<OrgNode[]>([]);
-  const [connectors, setConnectors] = useState<OrgConnector[]>([]);
+  const chartCanvasRef = useRef<HTMLDivElement | null>(null);
+  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const [layout, setLayout] = useState<OrgChartLayout>(() => createEmptyLayout());
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [dragging, setDragging] = useState<DragState | null>(null);
-  const [connectorParentId, setConnectorParentId] = useState('');
-  const [connectorChildId, setConnectorChildId] = useState('');
-  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [newEmployeeBySection, setNewEmployeeBySection] = useState<Record<string, string>>({});
+  const [fromSectionId, setFromSectionId] = useState('');
+  const [toSectionId, setToSectionId] = useState('');
+  const [connectorPaths, setConnectorPaths] = useState<ConnectorPath[]>([]);
+  const [dragState, setDragState] = useState<DragState | null>(null);
+
+  const storageKey = `payroll_org_chart_${projectId || 'default'}_movable_section_connectors`;
 
   const activeEmployees = useMemo(() => {
-    return (employees || []).filter((employee) => String(employee?.status || 'ACTIVE').toUpperCase() !== 'INACTIVE');
+    return (employees || []).filter(
+      (employee) => String(employee?.status || 'ACTIVE').toUpperCase() !== 'INACTIVE'
+    );
   }, [employees]);
 
   const employeesById = useMemo(() => {
     return new Map(activeEmployees.map((employee) => [getEmployeeId(employee), employee]));
   }, [activeEmployees]);
 
-  const nodesByEmployeeId = useMemo(() => {
-    return new Map(nodes.map((node) => [node.employeeId, node]));
-  }, [nodes]);
+  const sectionsById = useMemo(() => {
+    return new Map(layout.sections.map((section) => [section.id, section]));
+  }, [layout.sections]);
 
-  const storageKey = `payroll_org_chart_${projectId || 'default'}`;
+  const assignedEmployeeIds = useMemo(() => {
+    return new Set(
+      layout.sections.flatMap((section) =>
+        section.assignments.map((assignment) => assignment.employeeId)
+      )
+    );
+  }, [layout.sections]);
+
+  const sectionOptions = useMemo(() => {
+    return DEFAULT_SECTIONS.map((section) => ({
+      id: section.id,
+      title: section.title,
+    }));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadLayout = async () => {
       if (!projectId) {
-        const defaultNodes = buildDefaultNodes(activeEmployees);
-        setNodes(defaultNodes);
-        setConnectors(buildDefaultConnectors(defaultNodes, activeEmployees));
+        setLayout(createEmptyLayout());
         return;
       }
 
-      let savedNodes: OrgNode[] = [];
-      let savedConnectors: OrgConnector[] = [];
-      const localSaved = window.localStorage.getItem(storageKey);
-      if (localSaved) {
-        try {
-          const parsed = JSON.parse(localSaved);
-          savedNodes = Array.isArray(parsed?.nodes) ? parsed.nodes : [];
-          savedConnectors = Array.isArray(parsed?.connectors) ? parsed.connectors : [];
-        } catch {
-          savedNodes = [];
-          savedConnectors = [];
-        }
-      }
+      let savedLayout: Partial<OrgChartLayout> | null = null;
 
       try {
         const { data, error } = await supabase
@@ -219,350 +367,1286 @@ export default function PayrollOrgChart({ employees, projectId }: PayrollOrgChar
           .eq('project_id', projectId)
           .maybeSingle();
 
-        if (!error && data?.layout?.nodes && Array.isArray(data.layout.nodes)) {
-          savedNodes = data.layout.nodes;
-          savedConnectors = Array.isArray(data.layout.connectors) ? data.layout.connectors : [];
-          window.localStorage.setItem(storageKey, JSON.stringify(data.layout));
+        if (error) throw error;
+
+        if (data?.layout) {
+          savedLayout = data.layout as OrgChartLayout;
+          window.localStorage.setItem(storageKey, JSON.stringify(savedLayout));
+        } else {
+          const localSaved = window.localStorage.getItem(storageKey);
+
+          if (localSaved) {
+            try {
+              savedLayout = JSON.parse(localSaved);
+            } catch {
+              savedLayout = null;
+            }
+          }
         }
-      } catch {
-        // Local storage fallback keeps the org chart usable even before the optional Supabase table is added.
+      } catch (error) {
+        console.warn('Failed to load org chart from Supabase. Using local cache only.', error);
+
+        const localSaved = window.localStorage.getItem(storageKey);
+
+        if (localSaved) {
+          try {
+            savedLayout = JSON.parse(localSaved);
+          } catch {
+            savedLayout = null;
+          }
+        }
       }
 
-      const nextNodes = mergeNodesWithEmployees(savedNodes, activeEmployees);
-      const nextConnectors = mergeConnectorsWithEmployees(savedConnectors, nextNodes, activeEmployees);
-
       if (!cancelled) {
-        setNodes(nextNodes);
-        setConnectors(nextConnectors);
+        setLayout(normalizeLayout(savedLayout, activeEmployees));
       }
     };
 
     loadLayout();
+
     return () => {
       cancelled = true;
     };
   }, [projectId, storageKey, activeEmployees]);
 
+  const availableEmployees = (currentEmployeeId?: string) => {
+    return activeEmployees.filter((employee) => {
+      const employeeId = getEmployeeId(employee);
+      return employeeId === currentEmployeeId || !assignedEmployeeIds.has(employeeId);
+    });
+  };
+
+  const assignSectionRef = (sectionId: string) => (element: HTMLDivElement | null) => {
+    sectionRefs.current[sectionId] = element;
+  };
+
+  const computeConnectorPaths = () => {
+    const canvas = chartCanvasRef.current;
+    if (!canvas) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+
+    const nextPaths = layout.connectors
+      .map((connector) => {
+        const fromElement = sectionRefs.current[connector.fromSectionId];
+        const toElement = sectionRefs.current[connector.toSectionId];
+
+        if (!fromElement || !toElement) return null;
+
+        const fromRect = fromElement.getBoundingClientRect();
+        const toRect = toElement.getBoundingClientRect();
+
+        const fromCenterX = fromRect.left - canvasRect.left + fromRect.width / 2;
+        const fromCenterY = fromRect.top - canvasRect.top + fromRect.height / 2;
+        const toCenterX = toRect.left - canvasRect.left + toRect.width / 2;
+        const toCenterY = toRect.top - canvasRect.top + toRect.height / 2;
+
+        let startX = fromCenterX;
+        let startY = fromRect.bottom - canvasRect.top;
+        let endX = toCenterX;
+        let endY = toRect.top - canvasRect.top;
+        let path = '';
+
+        const isCoordinatorConnection =
+          connector.fromSectionId === 'coordinators' || connector.toSectionId === 'coordinators';
+
+        if (isCoordinatorConnection) {
+          const coordinatorIsFrom = connector.fromSectionId === 'coordinators';
+
+          if (coordinatorIsFrom) {
+            startX = fromRect.right - canvasRect.left;
+            startY = fromCenterY;
+
+            endX =
+              toCenterX >= fromCenterX
+                ? toRect.left - canvasRect.left
+                : toRect.right - canvasRect.left;
+            endY = toCenterY;
+          } else {
+            startX =
+              fromCenterX >= toCenterX
+                ? fromRect.left - canvasRect.left
+                : fromRect.right - canvasRect.left;
+            startY = fromCenterY;
+
+            endX = toRect.right - canvasRect.left;
+            endY = toCenterY;
+          }
+
+          const middleX = startX + (endX - startX) / 2;
+
+          path = `
+            M ${startX} ${startY}
+            C ${middleX} ${startY}, ${middleX} ${endY}, ${endX} ${endY}
+          `;
+        } else {
+          const middleY = startY + (endY - startY) / 2;
+
+          path = `
+            M ${startX} ${startY}
+            C ${startX} ${middleY}, ${endX} ${middleY}, ${endX} ${endY}
+          `;
+        }
+
+        return {
+          id: connector.id,
+          path,
+        };
+      })
+      .filter(Boolean) as ConnectorPath[];
+
+    setConnectorPaths(nextPaths);
+  };
+
+  useLayoutEffect(() => {
+    const timeout = window.setTimeout(computeConnectorPaths, 50);
+    return () => window.clearTimeout(timeout);
+  }, [layout.sections, layout.connectors, isEditing]);
+
   useEffect(() => {
-    if (!dragging) return;
+    const handleResize = () => computeConnectorPaths();
+    window.addEventListener('resize', handleResize);
 
-    const handleMove = (event: MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const bounds = canvas.getBoundingClientRect();
-      const nextX = Math.min(Math.max(8, dragging.originX + event.clientX - dragging.startX), Math.max(8, bounds.width - CARD_WIDTH - 8));
-      const nextY = Math.min(Math.max(8, dragging.originY + event.clientY - dragging.startY), CANVAS_HEIGHT - CARD_HEIGHT - 8);
-      setNodes((current) => current.map((node) => node.employeeId === dragging.employeeId ? { ...node, x: nextX, y: nextY } : node));
-    };
-
-    const handleUp = () => setDragging(null);
-    window.addEventListener('mousemove', handleMove);
-    window.addEventListener('mouseup', handleUp);
     return () => {
-      window.removeEventListener('mousemove', handleMove);
-      window.removeEventListener('mouseup', handleUp);
+      window.removeEventListener('resize', handleResize);
     };
-  }, [dragging]);
+  }, [layout.sections, layout.connectors]);
 
-  const handlePhotoChange = (employeeId: string, file?: File) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setNodes((current) => current.map((node) => node.employeeId === employeeId ? { ...node, photoUrl: String(reader.result || '') } : node));
+  useEffect(() => {
+    if (!dragState) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const deltaX = event.clientX - dragState.startPointerX;
+      const deltaY = event.clientY - dragState.startPointerY;
+
+      setLayout((current) => ({
+        ...current,
+        sections: current.sections.map((section) => {
+          if (section.id !== dragState.sectionId) return section;
+
+          const nextX = Math.max(
+            0,
+            Math.min(CANVAS_WIDTH - section.width, dragState.startX + deltaX)
+          );
+
+          const nextY = Math.max(
+            0,
+            Math.min(CANVAS_HEIGHT - 120, dragState.startY + deltaY)
+          );
+
+          return {
+            ...section,
+            x: nextX,
+            y: nextY,
+          };
+        }),
+      }));
     };
+
+    const handlePointerUp = () => {
+      setDragState(null);
+      setTimeout(computeConnectorPaths, 20);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [dragState]);
+
+  const updateSection = (sectionId: string, patch: Partial<OrgSection>) => {
+    setLayout((current) => ({
+      ...current,
+      sections: current.sections.map((section) =>
+        section.id === sectionId ? { ...section, ...patch } : section
+      ),
+    }));
+  };
+
+  const updateAssignment = (
+    sectionId: string,
+    assignmentId: string,
+    patch: Partial<OrgAssignment>
+  ) => {
+    setLayout((current) => ({
+      ...current,
+      sections: current.sections.map((section) => {
+        if (section.id !== sectionId) return section;
+
+        return {
+          ...section,
+          assignments: section.assignments.map((assignment) =>
+            assignment.id === assignmentId ? { ...assignment, ...patch } : assignment
+          ),
+        };
+      }),
+    }));
+  };
+
+  const handleStartDrag = (event: ReactPointerEvent<HTMLElement>, section: OrgSection) => {
+    if (!isEditing) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    setDragState({
+      sectionId: section.id,
+      startPointerX: event.clientX,
+      startPointerY: event.clientY,
+      startX: section.x,
+      startY: section.y,
+    });
+  };
+
+  const handleAddEmployee = (section: OrgSection) => {
+    const employeeId = newEmployeeBySection[section.id];
+    const employee = employeesById.get(employeeId);
+
+    if (!employee) {
+      toast.error('Select an employee first.');
+      return;
+    }
+
+    if (section.maxEmployees && section.assignments.length >= section.maxEmployees) {
+      toast.error(`${section.title} can only have one employee.`);
+      return;
+    }
+
+    setLayout((current) => ({
+      ...current,
+      sections: current.sections.map((item) => {
+        if (item.id !== section.id) return item;
+
+        return {
+          ...item,
+          assignments: [...item.assignments, makeAssignment(employee, section.id)],
+        };
+      }),
+    }));
+
+    setNewEmployeeBySection((current) => ({ ...current, [section.id]: '' }));
+  };
+
+  const handleRemoveEmployee = (sectionId: string, assignmentId: string) => {
+    setLayout((current) => ({
+      ...current,
+      sections: current.sections.map((section) => {
+        if (section.id !== sectionId) return section;
+
+        return {
+          ...section,
+          assignments: section.assignments.filter((assignment) => assignment.id !== assignmentId),
+        };
+      }),
+    }));
+  };
+
+  const handleMoveEmployee = (sectionId: string, assignmentId: string, direction: 'up' | 'down') => {
+    setLayout((current) => ({
+      ...current,
+      sections: current.sections.map((section) => {
+        if (section.id !== sectionId) return section;
+
+        const currentIndex = section.assignments.findIndex(
+          (assignment) => assignment.id === assignmentId
+        );
+        const nextIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+
+        if (currentIndex < 0 || nextIndex < 0 || nextIndex >= section.assignments.length) {
+          return section;
+        }
+
+        const nextAssignments = [...section.assignments];
+        const [removed] = nextAssignments.splice(currentIndex, 1);
+        nextAssignments.splice(nextIndex, 0, removed);
+
+        return {
+          ...section,
+          assignments: nextAssignments,
+        };
+      }),
+    }));
+  };
+
+  const handleEmployeeChange = (sectionId: string, assignmentId: string, employeeId: string) => {
+    const employee = employeesById.get(employeeId);
+    if (!employee) return;
+
+    updateAssignment(sectionId, assignmentId, {
+      id: makeAssignmentId(employeeId, sectionId),
+      employeeId,
+      photoUrl: getEmployeePhoto(employee) || '',
+    });
+  };
+
+  const handlePhotoUpload = (
+    sectionId: string,
+    assignmentId: string,
+    file?: File | null
+  ) => {
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      updateAssignment(sectionId, assignmentId, {
+        photoUrl: String(reader.result || ''),
+      });
+    };
+
     reader.readAsDataURL(file);
   };
 
   const handleAddConnector = () => {
-    if (!connectorParentId || !connectorChildId) {
-      toast.error('Select both a supervisor and an employee.');
+    if (!fromSectionId || !toSectionId) {
+      toast.error('Select both From Section and To Section.');
       return;
     }
 
-    if (connectorParentId === connectorChildId) {
-      toast.error('An employee cannot report to their own card.');
+    if (fromSectionId === toSectionId) {
+      toast.error('From Section and To Section cannot be the same.');
       return;
     }
 
-    setConnectors((current) => {
-      const withoutExistingSupervisorForChild = current.filter((connector) => connector.childEmployeeId !== connectorChildId);
-      return [
-        ...withoutExistingSupervisorForChild,
-        {
-          id: makeConnectorId(connectorParentId, connectorChildId),
-          parentEmployeeId: connectorParentId,
-          childEmployeeId: connectorChildId,
-          color: DEFAULT_CONNECTOR_COLOR
-        }
-      ];
-    });
+    const exists = layout.connectors.some(
+      (connector) =>
+        connector.fromSectionId === fromSectionId && connector.toSectionId === toSectionId
+    );
 
-    const parentName = getEmployeeName(employeesById.get(connectorParentId));
-    const childName = getEmployeeName(employeesById.get(connectorChildId));
-    toast.success(`${childName} now reports to ${parentName}.`);
+    if (exists) {
+      toast.error('This connector already exists.');
+      return;
+    }
+
+    const fromSection = sectionsById.get(fromSectionId);
+    const toSection = sectionsById.get(toSectionId);
+
+    const newConnector: OrgConnector = {
+      id: `${fromSectionId}-${toSectionId}-${Date.now()}`,
+      fromSectionId,
+      toSectionId,
+    };
+
+    setLayout((current) => ({
+      ...current,
+      connectors: [...current.connectors, newConnector],
+    }));
+
+    setFromSectionId('');
+    setToSectionId('');
+    toast.success(`${fromSection?.title || 'Section'} connected to ${toSection?.title || 'section'}.`);
   };
 
   const handleRemoveConnector = (connectorId: string) => {
-    setConnectors((current) => current.filter((connector) => connector.id !== connectorId));
+    setLayout((current) => ({
+      ...current,
+      connectors: current.connectors.filter((connector) => connector.id !== connectorId),
+    }));
   };
 
   const handleSave = async () => {
-    const layout = { nodes, connectors, updatedAt: new Date().toISOString() };
+    if (!projectId) {
+      toast.error('Select a project first.');
+      return;
+    }
+
+    const nextLayout = {
+      ...layout,
+      updatedAt: new Date().toISOString(),
+    };
+
     setIsSaving(true);
-    window.localStorage.setItem(storageKey, JSON.stringify(layout));
 
     try {
-      if (projectId) {
-        const { error } = await supabase
-          .from('payroll_org_charts')
-          .upsert({ project_id: projectId, layout, updated_at: new Date().toISOString() }, { onConflict: 'project_id' });
-        if (error) throw error;
-      }
-      toast.success('Org chart saved.');
+      const { data: userData } = await supabase.auth.getUser();
+
+      const { error } = await supabase
+        .from('payroll_org_charts')
+        .upsert(
+          {
+            project_id: projectId,
+            layout: nextLayout,
+            updated_by: userData?.user?.id || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'project_id' }
+        );
+
+      if (error) throw error;
+
+      window.localStorage.setItem(storageKey, JSON.stringify(nextLayout));
+      setLayout(nextLayout);
       setIsEditing(false);
+      toast.success('Org chart saved and shared to all users.');
     } catch (error) {
-      console.warn('Org chart saved locally. Add payroll_org_charts table to save it in Supabase.', error);
-      toast.success('Org chart saved on this browser.');
-      setIsEditing(false);
+      console.error('Failed to save org chart to Supabase:', error);
+      toast.error('Failed to save org chart to Supabase. Please check table/RLS setup.');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleReset = () => {
-    const resetNodes = buildDefaultNodes(activeEmployees);
-    const resetConnectors = buildDefaultConnectors(resetNodes, activeEmployees);
-    setNodes(resetNodes);
-    setConnectors(resetConnectors);
-    window.localStorage.setItem(storageKey, JSON.stringify({ nodes: resetNodes, connectors: resetConnectors, updatedAt: new Date().toISOString() }));
+  const handleReset = async () => {
+    const confirmed = window.confirm(
+      'Reset org chart positions, connectors, assignments, colors, descriptions, and profile pictures? Employee records will not be deleted.'
+    );
+
+    if (!confirmed) return;
+
+    if (!projectId) {
+      toast.error('Select a project first.');
+      return;
+    }
+
+    const resetLayout = createEmptyLayout();
+
+    try {
+      const { data: userData } = await supabase.auth.getUser();
+
+      const { error } = await supabase
+        .from('payroll_org_charts')
+        .upsert(
+          {
+            project_id: projectId,
+            layout: resetLayout,
+            updated_by: userData?.user?.id || null,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'project_id' }
+        );
+
+      if (error) throw error;
+
+      setLayout(resetLayout);
+      window.localStorage.setItem(storageKey, JSON.stringify(resetLayout));
+      toast.success('Org chart reset for all users.');
+    } catch (error) {
+      console.error('Failed to reset org chart in Supabase:', error);
+      toast.error('Failed to reset org chart in Supabase.');
+    }
   };
 
-  const connectorLines = useMemo(() => {
-    return connectors
-      .map((connector) => {
-        const parent = nodesByEmployeeId.get(connector.parentEmployeeId);
-        const child = nodesByEmployeeId.get(connector.childEmployeeId);
-        if (!parent || !child) return null;
+  const renderAvatar = (
+    assignment: OrgAssignment,
+    employeeName: string,
+    accentColor: string,
+    size = 38,
+    managerStyle = false
+  ) => {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '999px',
+          background: managerStyle ? 'rgba(255,255,255,0.12)' : '#e5e7eb',
+          color: managerStyle ? WHITE : accentColor,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          flexShrink: 0,
+          fontWeight: 900,
+          fontSize: size >= 50 ? '0.85rem' : '0.7rem',
+          border: managerStyle ? '2px solid rgba(255,255,255,0.85)' : '1px solid #dbeafe',
+        }}
+      >
+        {assignment.photoUrl ? (
+          <img
+            src={assignment.photoUrl}
+            alt={employeeName}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        ) : (
+          getInitials(employeeName) || <UserRound size={managerStyle ? 26 : 18} />
+        )}
+      </div>
+    );
+  };
 
-        return {
-          ...connector,
-          x1: parent.x + CARD_WIDTH / 2,
-          y1: parent.y + CARD_HEIGHT,
-          x2: child.x + CARD_WIDTH / 2,
-          y2: child.y,
-          color: connector.color || parent.color || DEFAULT_CONNECTOR_COLOR
-        };
-      })
-      .filter(Boolean) as Array<OrgConnector & { x1: number; y1: number; x2: number; y2: number; color: string }>;
-  }, [connectors, nodesByEmployeeId]);
+  const renderColorControl = (section: OrgSection) => {
+    if (!isEditing) return null;
+
+    return (
+      <div
+        style={{
+          padding: '10px 12px',
+          background: '#f8fafc',
+          borderBottom: '1px solid #e2e8f0',
+        }}
+      >
+        <label style={{ fontSize: '0.72rem', fontWeight: 800, color: '#475569' }}>
+          Accent Color
+          <input
+            type="color"
+            value={section.accentColor}
+            onChange={(event) => updateSection(section.id, { accentColor: event.target.value })}
+            style={{
+              width: '100%',
+              height: 32,
+              border: '1px solid #cbd5e1',
+              borderRadius: 6,
+              background: WHITE,
+              cursor: 'pointer',
+              marginTop: 4,
+            }}
+          />
+        </label>
+      </div>
+    );
+  };
+
+  const renderMoveHandle = (section: OrgSection) => {
+    if (!isEditing) return null;
+
+    return (
+      <button
+        type="button"
+        onPointerDown={(event) => handleStartDrag(event, section)}
+        style={{
+          width: '100%',
+          border: 'none',
+          borderBottom: '1px solid #e2e8f0',
+          background: '#f8fafc',
+          color: '#334155',
+          cursor: 'grab',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          fontSize: '0.74rem',
+          fontWeight: 900,
+          padding: '8px 10px',
+        }}
+      >
+        <Grip size={14} />
+        Move Section
+      </button>
+    );
+  };
+
+  const renderAssignmentEditor = (section: OrgSection, assignment: OrgAssignment, index: number) => {
+    const employeeOptions = availableEmployees(assignment.employeeId);
+
+    return (
+      <div
+        key={assignment.id}
+        style={{
+          padding: 10,
+          border: '1px solid #dbe4f0',
+          borderRadius: 12,
+          background: WHITE,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 7,
+          color: TEXT,
+        }}
+      >
+        <select
+          value={assignment.employeeId}
+          onChange={(event) => handleEmployeeChange(section.id, assignment.id, event.target.value)}
+          style={{
+            width: '100%',
+            padding: '7px 8px',
+            borderRadius: 9,
+            border: '1px solid #cbd5e1',
+            fontSize: '0.75rem',
+          }}
+        >
+          {employeeOptions.map((employee) => {
+            const employeeId = getEmployeeId(employee);
+
+            return (
+              <option key={employeeId} value={employeeId}>
+                {getEmployeeName(employee)} | {getEmployeePosition(employee)}
+              </option>
+            );
+          })}
+        </select>
+
+        <input
+          value={assignment.description}
+          onChange={(event) =>
+            updateAssignment(section.id, assignment.id, { description: event.target.value })
+          }
+          placeholder="Additional description"
+          style={{
+            width: '100%',
+            padding: '7px 8px',
+            borderRadius: 9,
+            border: '1px solid #cbd5e1',
+            fontSize: '0.75rem',
+          }}
+        />
+
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: '0.74rem',
+            color: '#1d4ed8',
+            fontWeight: 800,
+            cursor: 'pointer',
+          }}
+        >
+          <Upload size={14} />
+          Upload / Change Picture
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(event) =>
+              handlePhotoUpload(section.id, assignment.id, event.target.files?.[0])
+            }
+            style={{ display: 'none' }}
+          />
+        </label>
+
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button
+              type="button"
+              onClick={() => handleMoveEmployee(section.id, assignment.id, 'up')}
+              disabled={index === 0}
+              style={{
+                border: '1px solid #cbd5e1',
+                background: WHITE,
+                borderRadius: 8,
+                padding: 5,
+                cursor: index === 0 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <ArrowUp size={14} />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleMoveEmployee(section.id, assignment.id, 'down')}
+              disabled={index === section.assignments.length - 1}
+              style={{
+                border: '1px solid #cbd5e1',
+                background: WHITE,
+                borderRadius: 8,
+                padding: 5,
+                cursor: index === section.assignments.length - 1 ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <ArrowDown size={14} />
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleRemoveEmployee(section.id, assignment.id)}
+            style={{
+              border: '1px solid #fecaca',
+              background: '#fff1f2',
+              color: '#dc2626',
+              borderRadius: 8,
+              padding: '5px 8px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: '0.72rem',
+              fontWeight: 800,
+            }}
+          >
+            <X size={14} /> Remove
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderAddEmployee = (section: OrgSection) => {
+    if (!isEditing) return null;
+
+    const isFull = Boolean(section.maxEmployees && section.assignments.length >= section.maxEmployees);
+    const employeeOptions = availableEmployees();
+
+    if (isFull || employeeOptions.length === 0) return null;
+
+    return (
+      <div style={{ display: 'flex', gap: 7, paddingTop: 6 }}>
+        <select
+          value={newEmployeeBySection[section.id] || ''}
+          onChange={(event) =>
+            setNewEmployeeBySection((current) => ({
+              ...current,
+              [section.id]: event.target.value,
+            }))
+          }
+          style={{
+            flex: 1,
+            minWidth: 0,
+            padding: '8px 9px',
+            borderRadius: 10,
+            border: '1px solid #cbd5e1',
+            background: WHITE,
+            fontSize: '0.75rem',
+          }}
+        >
+          <option value="">Select employee</option>
+
+          {employeeOptions.map((employee) => {
+            const employeeId = getEmployeeId(employee);
+
+            return (
+              <option key={employeeId} value={employeeId}>
+                {getEmployeeName(employee)} | {getEmployeePosition(employee)}
+              </option>
+            );
+          })}
+        </select>
+
+        <button
+          type="button"
+          onClick={() => handleAddEmployee(section)}
+          style={{
+            border: 'none',
+            background: section.accentColor,
+            color: WHITE,
+            borderRadius: 10,
+            padding: '0 10px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+          }}
+        >
+          <Plus size={16} />
+        </button>
+      </div>
+    );
+  };
+
+  const renderEmployeeRow = (section: OrgSection, assignment: OrgAssignment, index: number) => {
+    const employee = employeesById.get(assignment.employeeId);
+    const employeeName = getEmployeeName(employee);
+    const employeePosition = getEmployeePosition(employee);
+
+    if (isEditing) return renderAssignmentEditor(section, assignment, index);
+
+    return (
+      <div
+        key={assignment.id}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '8px 10px',
+          borderRadius: 12,
+          background: WHITE,
+          border: `1px solid ${section.accentColor}22`,
+          boxShadow: '0 2px 8px rgba(15, 23, 42, 0.04)',
+          color: TEXT,
+        }}
+      >
+        {renderAvatar(assignment, employeeName, section.accentColor, 36)}
+
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 900,
+              fontSize: '0.78rem',
+              lineHeight: 1.15,
+              color: TEXT,
+            }}
+          >
+            {employeeName}
+          </div>
+
+          <div
+            style={{
+              fontSize: '0.7rem',
+              lineHeight: 1.2,
+              color: section.accentColor,
+              fontWeight: 800,
+              marginTop: 2,
+            }}
+          >
+            {employeePosition}
+          </div>
+
+          {assignment.description && (
+            <div
+              style={{
+                fontSize: '0.68rem',
+                lineHeight: 1.2,
+                color: MUTED,
+                marginTop: 2,
+              }}
+            >
+              {assignment.description}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSectionCard = (section: OrgSection) => {
+    const isManager = isManagerSection(section.id);
+    const assignment = section.assignments[0];
+    const employee = assignment ? employeesById.get(assignment.employeeId) : null;
+    const employeeName = employee ? getEmployeeName(employee) : '';
+    const employeePosition = employee ? getEmployeePosition(employee) : '';
+
+    if (isManager) {
+      return (
+        <div
+          ref={assignSectionRef(section.id)}
+          style={{
+            position: 'absolute',
+            left: section.x,
+            top: section.y,
+            width: section.width,
+            zIndex: dragState?.sectionId === section.id ? 5 : 2,
+          }}
+        >
+          {renderMoveHandle(section)}
+
+          <div
+            style={{
+              background: section.accentColor,
+              borderRadius: 14,
+              boxShadow: '0 10px 22px rgba(15, 23, 42, 0.20)',
+              border: `2px solid ${section.accentColor}`,
+              overflow: 'hidden',
+            }}
+          >
+            {assignment && employee ? (
+              <div
+                style={{
+                  padding: '16px 22px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 18,
+                  minHeight: 92,
+                }}
+              >
+                {renderAvatar(assignment, employeeName, section.accentColor, 58, true)}
+
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      color: WHITE,
+                      fontSize: '1.15rem',
+                      fontWeight: 950,
+                      lineHeight: 1.1,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {employeeName}
+                  </div>
+
+                  <div
+                    style={{
+                      color: YELLOW,
+                      fontSize: '0.9rem',
+                      fontWeight: 950,
+                      marginTop: 5,
+                      lineHeight: 1.15,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {employeePosition}
+                  </div>
+
+                  {assignment.description && (
+                    <div
+                      style={{
+                        color: 'rgba(255,255,255,0.82)',
+                        fontSize: '0.72rem',
+                        marginTop: 5,
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {assignment.description}
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: 16 }}>
+                <div
+                  style={{
+                    border: '1px dashed rgba(255,255,255,0.65)',
+                    borderRadius: 12,
+                    padding: 12,
+                    textAlign: 'center',
+                    color: WHITE,
+                    fontSize: '0.82rem',
+                  }}
+                >
+                  No employee assigned
+                </div>
+              </div>
+            )}
+
+            {isEditing && (
+              <div
+                style={{
+                  background: WHITE,
+                  borderTop: '1px solid #e2e8f0',
+                  padding: 12,
+                }}
+              >
+                {renderColorControl(section)}
+
+                {assignment ? renderAssignmentEditor(section, assignment, 0) : renderAddEmployee(section)}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        ref={assignSectionRef(section.id)}
+        style={{
+          position: 'absolute',
+          left: section.x,
+          top: section.y,
+          width: section.width,
+          background: WHITE,
+          borderRadius: 18,
+          border: `2px solid ${section.accentColor}`,
+          boxShadow: '0 10px 22px rgba(15, 23, 42, 0.10)',
+          overflow: 'hidden',
+          zIndex: dragState?.sectionId === section.id ? 5 : 2,
+        }}
+      >
+        <div style={{ height: 8, background: section.accentColor }} />
+
+        {renderMoveHandle(section)}
+
+        {isFixedTitleSection(section.id) && (
+          <div
+            style={{
+              padding: '14px 16px 10px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              color: section.accentColor,
+              fontWeight: 950,
+              textTransform: 'uppercase',
+            }}
+          >
+            {getSectionIcon(section.id, section.accentColor)}
+            <span>{section.title}</span>
+          </div>
+        )}
+
+        {renderColorControl(section)}
+
+        <div style={{ padding: '8px 12px 12px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+          {section.assignments.length === 0 && (
+            <div
+              style={{
+                padding: 12,
+                border: `1px dashed ${section.accentColor}`,
+                borderRadius: 10,
+                textAlign: 'center',
+                color: section.accentColor,
+                fontSize: '0.75rem',
+              }}
+            >
+              No employee assigned
+            </div>
+          )}
+
+          {section.assignments.map((assignmentItem, index) =>
+            renderEmployeeRow(section, assignmentItem, index)
+          )}
+
+          {renderAddEmployee(section)}
+        </div>
+      </div>
+    );
+  };
+
+  const renderConnectorEditor = () => {
+    if (!isEditing) return null;
+
+    return (
+      <div
+        style={{
+          borderTop: '1px solid #e2e8f0',
+          borderBottom: '1px solid #e2e8f0',
+          padding: '16px 24px',
+          background: '#f8fafc',
+        }}
+      >
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '160px 1fr 20px 1fr 130px',
+            gap: 10,
+            alignItems: 'center',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              fontSize: '0.82rem',
+              fontWeight: 900,
+              color: TEXT,
+            }}
+          >
+            <Link2 size={15} />
+            Add connector
+          </div>
+
+          <select
+            value={fromSectionId}
+            onChange={(event) => setFromSectionId(event.target.value)}
+            style={{
+              height: 40,
+              borderRadius: 10,
+              border: '1px solid #cbd5e1',
+              padding: '0 12px',
+              background: WHITE,
+              color: TEXT,
+            }}
+          >
+            <option value="">From Section</option>
+            {sectionOptions.map((section) => (
+              <option key={`from-${section.id}`} value={section.id}>
+                {section.title}
+              </option>
+            ))}
+          </select>
+
+          <div style={{ textAlign: 'center', color: '#475569', fontWeight: 900 }}>→</div>
+
+          <select
+            value={toSectionId}
+            onChange={(event) => setToSectionId(event.target.value)}
+            style={{
+              height: 40,
+              borderRadius: 10,
+              border: '1px solid #cbd5e1',
+              padding: '0 12px',
+              background: WHITE,
+              color: TEXT,
+            }}
+          >
+            <option value="">To Section</option>
+            {sectionOptions.map((section) => (
+              <option key={`to-${section.id}`} value={section.id}>
+                {section.title}
+              </option>
+            ))}
+          </select>
+
+          <button
+            type="button"
+            onClick={handleAddConnector}
+            style={{
+              height: 40,
+              borderRadius: 10,
+              border: 'none',
+              background: '#0b5ed7',
+              color: WHITE,
+              fontWeight: 900,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 7,
+            }}
+          >
+            <Plus size={14} />
+            Add Line
+          </button>
+        </div>
+
+        {layout.connectors.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            {layout.connectors.map((connector) => {
+              const fromSection = sectionsById.get(connector.fromSectionId);
+              const toSection = sectionsById.get(connector.toSectionId);
+
+              if (!fromSection || !toSection) return null;
+
+              return (
+                <div
+                  key={connector.id}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '7px 10px',
+                    borderRadius: 999,
+                    border: '1px solid #cbd5e1',
+                    background: WHITE,
+                    color: TEXT,
+                    fontSize: '0.76rem',
+                    fontWeight: 800,
+                  }}
+                >
+                  <span>
+                    {fromSection.title} → {toSection.title}
+                  </span>
+
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveConnector(connector.id)}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      color: '#ef4444',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: 0,
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   if (!projectId) {
     return (
-      <div className="card" style={{ padding: '24px', marginTop: '24px', color: 'var(--text-muted)' }}>
+      <div className="card" style={{ padding: 24, marginTop: 24, color: 'var(--text-muted)' }}>
         Select a project to display the payroll org chart.
       </div>
     );
   }
 
   return (
-    <div className="card" style={{ padding: 0, marginTop: '24px', overflow: 'hidden' }}>
-      <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+    <div className="card" style={{ padding: 0, marginTop: 24, overflow: 'hidden' }}>
+      <div
+        style={{
+          padding: '20px 24px',
+          borderBottom: '1px solid var(--border-color)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          gap: 16,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <Users size={20} style={{ color: 'var(--primary)' }} />
-            <h3 style={{ fontWeight: 700, color: 'var(--text-main)', fontSize: '1rem' }}>Project Organization Chart</h3>
+            <h3 style={{ fontWeight: 800, color: 'var(--text-main)', fontSize: '1rem' }}>
+              Project Organization Chart
+            </h3>
           </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: '4px' }}>
-            Employee cards and reporting lines are based on this project's employee records.
+
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+            Movable org chart boxes with editable section connectors.
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button type="button" onClick={() => setIsEditing((value) => !value)} className="btn btn-secondary" style={{ cursor: 'pointer' }}>
-            {isEditing ? 'Preview' : 'Edit Chart'}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => setIsEditing((value: boolean) => !value)}
+            className="btn btn-secondary"
+            style={{ cursor: 'pointer', display: 'flex', gap: 6, alignItems: 'center' }}
+          >
+            <Pencil size={15} /> {isEditing ? 'Preview' : 'Edit Chart'}
           </button>
-          <button type="button" onClick={handleReset} className="btn btn-secondary" style={{ cursor: 'pointer', display: 'flex', gap: '6px', alignItems: 'center' }}>
+
+          <button
+            type="button"
+            onClick={handleReset}
+            className="btn btn-secondary"
+            style={{ cursor: 'pointer', display: 'flex', gap: 6, alignItems: 'center' }}
+          >
             <RotateCcw size={15} /> Reset Layout
           </button>
-          <button type="button" onClick={handleSave} disabled={isSaving} className="btn btn-primary" style={{ cursor: isSaving ? 'not-allowed' : 'pointer', display: 'flex', gap: '6px', alignItems: 'center' }}>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="btn btn-primary"
+            style={{
+              cursor: isSaving ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              gap: 6,
+              alignItems: 'center',
+            }}
+          >
             <Save size={15} /> {isSaving ? 'Saving...' : 'Save Chart'}
           </button>
         </div>
       </div>
 
-      {isEditing && activeEmployees.length > 1 && (
-        <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border-color)', background: '#f8fafc' }}>
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#334155', fontWeight: 800, fontSize: '0.82rem' }}>
-              <Link2 size={16} /> Add reporting connector
-            </div>
-            <select
-              value={connectorParentId}
-              onChange={(event) => setConnectorParentId(event.target.value)}
-              style={{ minWidth: '220px', padding: '9px 10px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#fff' }}
-            >
-              <option value="">Supervisor / Reports To</option>
-              {activeEmployees.map((employee) => {
-                const employeeId = getEmployeeId(employee);
-                return <option key={`parent-${employeeId}`} value={employeeId}>{getEmployeeName(employee)} — {getEmployeePosition(employee)}</option>;
-              })}
-            </select>
-            <span style={{ color: '#64748b', fontWeight: 700 }}>→</span>
-            <select
-              value={connectorChildId}
-              onChange={(event) => setConnectorChildId(event.target.value)}
-              style={{ minWidth: '220px', padding: '9px 10px', borderRadius: '10px', border: '1px solid #cbd5e1', background: '#fff' }}
-            >
-              <option value="">Employee / Direct Report</option>
-              {activeEmployees.map((employee) => {
-                const employeeId = getEmployeeId(employee);
-                return <option key={`child-${employeeId}`} value={employeeId}>{getEmployeeName(employee)} — {getEmployeePosition(employee)}</option>;
-              })}
-            </select>
-            <button type="button" onClick={handleAddConnector} className="btn btn-primary" style={{ cursor: 'pointer', display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <Link2 size={15} /> Connect
-            </button>
-          </div>
-
-          {connectors.length > 0 && (
-            <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              {connectors.map((connector) => {
-                const parent = employeesById.get(connector.parentEmployeeId);
-                const child = employeesById.get(connector.childEmployeeId);
-                if (!parent || !child) return null;
-
-                return (
-                  <div key={connector.id} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '7px 9px', borderRadius: '999px', background: '#fff', border: '1px solid #cbd5e1', color: '#334155', fontSize: '0.75rem', fontWeight: 700 }}>
-                    <span>{getEmployeeName(parent)} → {getEmployeeName(child)}</span>
-                    <button type="button" title="Remove connector" onClick={() => handleRemoveConnector(connector.id)} style={{ border: 'none', background: 'transparent', color: '#ef4444', cursor: 'pointer', display: 'flex', padding: 0 }}>
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+      {renderConnectorEditor()}
 
       {activeEmployees.length === 0 ? (
-        <div style={{ padding: '36px', textAlign: 'center', color: 'var(--text-muted)' }}>
+        <div style={{ padding: 36, textAlign: 'center', color: 'var(--text-muted)' }}>
           No employees found for this project. Add employees first in Employee Management.
         </div>
       ) : (
-        <div ref={canvasRef} style={{ position: 'relative', height: `${CANVAS_HEIGHT}px`, overflow: 'auto', background: 'linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%)' }}>
-          <svg width="100%" height={CANVAS_HEIGHT} style={{ position: 'absolute', inset: 0, minWidth: '1160px', pointerEvents: isEditing ? 'auto' : 'none', zIndex: 1 }}>
-            <defs>
-              <marker id="payroll-org-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
-                <path d="M0,0 L0,6 L9,3 z" fill={DEFAULT_CONNECTOR_COLOR} />
-              </marker>
-            </defs>
-
-            {connectorLines.map((line) => {
-              const path = `M ${line.x1} ${line.y1} C ${line.x1} ${line.y1 + 42}, ${line.x2} ${line.y2 - 42}, ${line.x2} ${line.y2}`;
-              return (
-                <g key={line.id}>
-                  {isEditing && (
-                    <path
-                      d={path}
-                      stroke="transparent"
-                      strokeWidth="14"
-                      fill="none"
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => handleRemoveConnector(line.id)}
-                    />
-                  )}
-                  <path
-                    d={path}
-                    stroke={line.color}
-                    strokeWidth="2.5"
-                    fill="none"
-                    markerEnd="url(#payroll-org-arrow)"
-                    opacity={0.88}
-                  />
-                </g>
-              );
-            })}
-          </svg>
-
-          <div style={{ position: 'relative', minWidth: '1160px', height: `${CANVAS_HEIGHT}px`, zIndex: 2 }}>
-            {nodes.map((node) => {
-              const employee = employeesById.get(node.employeeId);
-              if (!employee) return null;
-              const name = getEmployeeName(employee);
-              const position = getEmployeePosition(employee);
-              const department = getEmployeeDepartment(employee);
-              const reportsToConnector = connectors.find((connector) => connector.childEmployeeId === node.employeeId);
-              const reportsToName = reportsToConnector ? getEmployeeName(employeesById.get(reportsToConnector.parentEmployeeId)) : '';
-
-              return (
-                <div
-                  key={node.employeeId}
-                  style={{
-                    position: 'absolute',
-                    left: node.x,
-                    top: node.y,
-                    width: CARD_WIDTH,
-                    minHeight: CARD_HEIGHT,
-                    background: '#ffffff',
-                    borderRadius: '16px',
-                    border: `2px solid ${node.color || DEFAULT_NODE_COLOR}`,
-                    boxShadow: '0 12px 28px rgba(15, 23, 42, 0.12)',
-                    overflow: 'hidden',
-                    userSelect: dragging ? 'none' : 'auto'
-                  }}
+        <div style={{ overflowX: 'auto', background: WHITE, padding: '28px' }}>
+          <div
+            ref={chartCanvasRef}
+            style={{
+              width: CANVAS_WIDTH,
+              height: CANVAS_HEIGHT,
+              position: 'relative',
+              background: 'linear-gradient(180deg, #ffffff 0%, #f8fbff 100%)',
+              borderRadius: 18,
+              border: '1px solid #e2e8f0',
+            }}
+          >
+            <svg
+              width={CANVAS_WIDTH}
+              height={CANVAS_HEIGHT}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                pointerEvents: 'none',
+                zIndex: 1,
+                overflow: 'visible',
+              }}
+            >
+              <defs>
+                <marker
+                  id="section-arrow"
+                  markerWidth="10"
+                  markerHeight="10"
+                  refX="7"
+                  refY="3"
+                  orient="auto"
+                  markerUnits="strokeWidth"
                 >
-                  <div style={{ height: '10px', background: node.color || DEFAULT_NODE_COLOR }} />
-                  <div style={{ padding: '12px', display: 'flex', gap: '12px' }}>
-                    <div style={{ position: 'relative', width: '54px', height: '54px', borderRadius: '999px', overflow: 'hidden', background: '#e2e8f0', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontWeight: 800 }}>
-                      {node.photoUrl ? (
-                        <img src={node.photoUrl} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        name.split(' ').map((part) => part[0]).slice(0, 2).join('').toUpperCase()
-                      )}
-                      {isEditing && (
-                        <label title="Add picture" style={{ position: 'absolute', inset: 0, background: 'rgba(15, 23, 42, 0.48)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                          <Camera size={18} />
-                          <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(event) => handlePhotoChange(node.employeeId, event.target.files?.[0])} />
-                        </label>
-                      )}
-                    </div>
+                  <path d="M0,0 L0,6 L8,3 z" fill="#64748b" />
+                </marker>
+              </defs>
 
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: '0.92rem', fontWeight: 800, color: '#0f172a', lineHeight: 1.2 }}>{name}</div>
-                      <div style={{ fontSize: '0.78rem', color: node.color || DEFAULT_NODE_COLOR, fontWeight: 700, marginTop: '4px', lineHeight: 1.25 }}>{position}</div>
-                      {department && <div style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '3px' }}>{department}</div>}
-                      {reportsToName && <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '5px' }}>Reports to: {reportsToName}</div>}
-                    </div>
-                  </div>
+              {connectorPaths.map((connector) => (
+                <path
+                  key={connector.id}
+                  d={connector.path}
+                  stroke="#64748b"
+                  strokeWidth={2.25}
+                  fill="none"
+                  markerEnd="url(#section-arrow)"
+                />
+              ))}
+            </svg>
 
-                  {isEditing && (
-                    <div style={{ borderTop: '1px solid #e2e8f0', padding: '8px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
-                      <button
-                        type="button"
-                        title="Drag to move"
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          setDragging({ employeeId: node.employeeId, startX: event.clientX, startY: event.clientY, originX: node.x, originY: node.y });
-                        }}
-                        style={{ border: 'none', background: 'transparent', color: '#475569', cursor: 'grab', display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.76rem', fontWeight: 700 }}
-                      >
-                        <Grip size={15} /> Move
-                      </button>
-                      <label title="Change color" style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#475569', fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer' }}>
-                        <Palette size={15} /> Color
-                        <input
-                          type="color"
-                          value={node.color || DEFAULT_NODE_COLOR}
-                          onChange={(event) => setNodes((current) => current.map((item) => item.employeeId === node.employeeId ? { ...item, color: event.target.value } : item))}
-                          style={{ width: '24px', height: '24px', border: 'none', padding: 0, background: 'transparent', cursor: 'pointer' }}
-                        />
-                      </label>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {layout.sections.map((section) => renderSectionCard(section))}
           </div>
         </div>
       )}
