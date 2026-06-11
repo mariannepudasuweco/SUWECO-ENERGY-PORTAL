@@ -5824,9 +5824,7 @@ window.boqBudgets = boqBudgets;
             }
 
             html += `
-            
-
-</body>
+            </body>
             </html>
             `;
 
@@ -8668,6 +8666,113 @@ window.loadLocalProcurementFromSupabase = async function() {
     console.log('MAPPED LOCAL RECORDS:', localRecords);
 };
 
+// =========================================================
+// MATERIALS HELPERS
+// Fixes null display and stock/status handling.
+// =========================================================
+
+window.cleanDisplayValue = function(value, fallback = '') {
+    if (value === null || value === undefined) return fallback;
+
+    const text = String(value).trim();
+
+    if (
+        text === '' ||
+        text.toLowerCase() === 'null' ||
+        text.toLowerCase() === 'undefined' ||
+        text.toLowerCase() === 'nan'
+    ) {
+        return fallback;
+    }
+
+    return text;
+};
+
+window.cleanNumberValue = function(value, fallback = 0) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+};
+
+window.getMaterialStatus = function(currentStock, minStock) {
+    const stock = Number(currentStock || 0);
+    const min = Number(minStock || 0);
+
+    if (stock <= 0) return 'Low Stock';
+    if (stock <= min) return 'Low Stock';
+    return 'Fully Stocked';
+};
+
+window.getStockEffect = function(transactionType, quantity) {
+    const qty = Number(quantity || 0);
+    const type = String(transactionType || '').trim().toUpperCase();
+
+    if (type === 'IN') return qty;
+    if (type === 'OUT') return -qty;
+
+    return 0;
+};
+
+window.recalculateMaterialStocksLocally = function() {
+    const stockByMaterialId = {};
+
+    (window.materialsMasterlist || materialsMasterlist || []).forEach(material => {
+        stockByMaterialId[String(material.id)] = 0;
+    });
+
+    (window.materialsTransactions || materialsTransactions || []).forEach(transaction => {
+        const materialId = window.cleanDisplayValue(transaction.materialId);
+
+        if (!materialId) return;
+
+        if (stockByMaterialId[String(materialId)] === undefined) {
+            stockByMaterialId[String(materialId)] = 0;
+        }
+
+        stockByMaterialId[String(materialId)] += window.getStockEffect(
+            transaction.transactionType,
+            transaction.quantity
+        );
+    });
+
+    materialsMasterlist = (window.materialsMasterlist || materialsMasterlist || []).map(material => {
+        const currentStock = Number(stockByMaterialId[String(material.id)] || 0);
+        const minStock = Number(material.minStock || 0);
+
+        return {
+            ...material,
+            currentStock,
+            status: window.getMaterialStatus(currentStock, minStock)
+        };
+    });
+
+    window.materialsMasterlist = materialsMasterlist;
+};
+
+window.filterMaterialsTransactionsTable = function() {
+    const searchInput = document.getElementById('materialsTransactionSearch');
+    const typeFilter = document.getElementById('materialsTransactionTypeFilter');
+    const table = document.getElementById('materialsTransactionsTable');
+
+    if (!table) return;
+
+    const search = String(searchInput?.value || '').trim().toLowerCase();
+    const type = String(typeFilter?.value || '').trim().toUpperCase();
+
+    const rows = table.querySelectorAll('tbody tr');
+
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        const rowType = Array.from(row.querySelectorAll('td'))
+            .map(td => td.textContent.trim().toUpperCase())
+            .find(value => value === 'IN' || value === 'OUT') || '';
+
+        const matchesSearch = !search || text.includes(search);
+        const matchesType = !type || rowType === type;
+
+        row.style.display = matchesSearch && matchesType ? '' : 'none';
+    });
+};
+
 window.loadMaterialsMasterlistFromSupabase = async function() {
     const projectId = window.currentProjectId || currentProjectId;
 
@@ -8692,22 +8797,28 @@ window.loadMaterialsMasterlistFromSupabase = async function() {
 
     if (error) {
         console.error(error);
+        window.showToast?.('Failed to load materials masterlist.', 'error');
         return;
     }
 
-    materialsMasterlist = (data || []).map(row => ({
-        id: row.id,
-        projectId: row.project_id,
-        itemCode: row.item_code,
-        itemName: row.item_name,
-        department: row.department,
-        type: row.material_type,
-        unit: row.unit,
-        currentStock: Number(row.current_stock || 0),
-        minStock: Number(row.min_stock || 0),
-        status: row.status || 'Available',
-        created_by: row.created_by || null
-    }));
+    materialsMasterlist = (data || []).map(row => {
+        const currentStock = window.cleanNumberValue(row.current_stock, 0);
+        const minStock = window.cleanNumberValue(row.min_stock, 0);
+
+        return {
+            id: row.id,
+            projectId: row.project_id,
+            itemCode: window.cleanDisplayValue(row.item_code),
+            itemName: window.cleanDisplayValue(row.item_name),
+            department: window.cleanDisplayValue(row.department),
+            type: window.cleanDisplayValue(row.material_type),
+            unit: window.cleanDisplayValue(row.unit),
+            currentStock,
+            minStock,
+            status: window.cleanDisplayValue(row.status) || window.getMaterialStatus(currentStock, minStock),
+            created_by: row.created_by || null
+        };
+    });
 
     window.materialsMasterlist = materialsMasterlist;
 
@@ -8738,6 +8849,7 @@ window.loadMaterialsTransactionsFromSupabase = async function() {
 
     if (error) {
         console.error(error);
+        window.showToast?.('Failed to load material transactions.', 'error');
         return;
     }
 
@@ -8746,24 +8858,24 @@ window.loadMaterialsTransactionsFromSupabase = async function() {
         projectId: row.project_id,
         materialId: row.material_id,
 
-        date: row.transaction_date,
-        time: row.transaction_time,
+        date: window.cleanDisplayValue(row.transaction_date),
+        time: window.cleanDisplayValue(row.transaction_time),
 
-        mrsNo: row.mrs_withdrawal_no,
-        poQty: Number(row.po_qty || 0),
-        poNo: row.po_no,
-        prsNo: row.prs_no,
+        mrsNo: window.cleanDisplayValue(row.mrs_withdrawal_no),
+        poQty: window.cleanNumberValue(row.po_qty, 0),
+        poNo: window.cleanDisplayValue(row.po_no),
+        prsNo: window.cleanDisplayValue(row.prs_no),
 
-        charging: row.charging,
-        actualCharging: row.actual_charging,
+        charging: window.cleanDisplayValue(row.charging),
+        actualCharging: window.cleanDisplayValue(row.actual_charging),
 
-        itemCode: row.item_code,
-        itemName: row.item_name,
-        quantity: Number(row.quantity || 0),
-        transactionType: row.transaction_type,
-        accountabilityNo: row.accountability,
-        type: row.transaction_type,
-        remarks: row.remarks,
+        itemCode: window.cleanDisplayValue(row.item_code),
+        itemName: window.cleanDisplayValue(row.item_name),
+        quantity: window.cleanNumberValue(row.quantity, 0),
+        transactionType: window.cleanDisplayValue(row.transaction_type),
+        accountabilityNo: window.cleanDisplayValue(row.accountability),
+        type: window.cleanDisplayValue(row.transaction_type),
+        remarks: window.cleanDisplayValue(row.remarks),
         created_by: row.created_by || null
     }));
 
@@ -13177,33 +13289,6 @@ window.deleteMaterialTransaction = function(id) {
             return;
         }
 
-        if (transaction) {
-            const material = materialsMasterlist.find(
-                m => String(m.id) === String(transaction.materialId)
-            );
-
-            if (material) {
-                const stockEffect = transaction.transactionType === 'IN'
-                    ? Number(transaction.quantity || 0)
-                    : -Number(transaction.quantity || 0);
-
-                const revertedStock = Number(material.currentStock || 0) - stockEffect;
-
-                await window.supabase
-                    .from('materials_masterlist')
-                    .update({
-                        current_stock: revertedStock,
-                        status: revertedStock <= 0
-                            ? 'Out of Stock'
-                            : revertedStock <= Number(material.minStock || 0)
-                                ? 'Low Stock'
-                                : 'Available',
-                        updated_at: new Date().toISOString()
-                    })
-                    .eq('id', String(material.id));
-            }
-        }
-
         materialsTransactions = materialsTransactions.filter(
             t => String(t.id) !== String(id)
         );
@@ -13223,278 +13308,394 @@ window.deleteMaterialTransaction = function(id) {
 };
 
 
-        window.renderMaterialsView = function() {
-    const materialsProjectId = window.currentProjectId || currentProjectId;
+        // =========================================================
+// MATERIALS PAGE FULL REVISED CODE
+// Fixes:
+// 1. Masterlist department filter: Civil, Electrical, Mechanical, SCADA
+// 2. Transaction department filter: Civil, Electrical, Mechanical, SCADA
+// 3. Type filter: Consumable, Non-Consumable
+// 4. Masterlist global search working
+// 5. Dashboard counts only items with transactions
+// 6. Low stock / fully stocked list only shows items with IN/OUT transaction
+// =========================================================
 
-    if (
-        materialsProjectId &&
-        window.__materialsLoadedProjectId !== materialsProjectId
-    ) {
-        window.__materialsLoadedProjectId = materialsProjectId;
+window.materialsSafeValue = function(value, fallback = '') {
+    if (value === null || value === undefined) return fallback;
+    const text = String(value).trim();
+    if (text === '' || text.toLowerCase() === 'null' || text.toLowerCase() === 'undefined' || text.toLowerCase() === 'nan') return fallback;
+    return text;
+};
 
-        if (window.contentArea) {
-            window.contentArea.innerHTML = `
-                <div style="padding: 40px; text-align: center; color: var(--text-muted);">
-                    Loading materials records...
-                </div>
-            `;
+window.materialsNormalizeText = function(value) {
+    return window.materialsSafeValue(value).toLowerCase().replace(/\s+/g, ' ').trim();
+};
+
+window.materialsNumber = function(value, fallback = 0) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+};
+
+window.materialsNormalizeDepartment = function(value) {
+    const text = window.materialsNormalizeText(value);
+    if (text.includes('civil')) return 'Civil';
+    if (text.includes('electrical')) return 'Electrical';
+    if (text.includes('mechanical')) return 'Mechanical';
+    if (text.includes('scada')) return 'SCADA';
+    return window.materialsSafeValue(value);
+};
+
+window.materialsNormalizeType = function(value) {
+    const text = window.materialsNormalizeText(value);
+    if (text.includes('non') && text.includes('consumable')) return 'Non-Consumable';
+    if (text.includes('consumable')) return 'Consumable';
+    return window.materialsSafeValue(value);
+};
+
+window.materialsGetMaterialId = function(material) {
+    return window.materialsSafeValue(material?.id || material?.materialId || material?.material_id);
+};
+
+window.materialsGetMaterialCode = function(material) {
+    return window.materialsSafeValue(material?.itemCode || material?.item_code);
+};
+
+window.materialsGetTransactionMaterialId = function(transaction) {
+    return window.materialsSafeValue(transaction?.materialId || transaction?.material_id);
+};
+
+window.materialsGetTransactionItemCode = function(transaction) {
+    return window.materialsSafeValue(transaction?.itemCode || transaction?.item_code);
+};
+
+window.materialsBuildTransactionItemSet = function() {
+    const transactionRows = window.materialsTransactions || materialsTransactions || [];
+    const set = new Set();
+
+    transactionRows.forEach(transaction => {
+        const id = window.materialsGetTransactionMaterialId(transaction);
+        const code = window.materialsGetTransactionItemCode(transaction);
+        const type = window.materialsSafeValue(transaction?.transactionType || transaction?.transaction_type || transaction?.type).toUpperCase();
+
+        // Count only valid IN / OUT transactions.
+        if (type !== 'IN' && type !== 'OUT') return;
+
+        if (id) set.add(`id:${id}`);
+        if (code) set.add(`code:${code.toLowerCase()}`);
+    });
+
+    return set;
+};
+
+window.materialsHasTransaction = function(material, transactionSet = null) {
+    const set = transactionSet || window.materialsBuildTransactionItemSet();
+    const id = window.materialsGetMaterialId(material);
+    const code = window.materialsGetMaterialCode(material);
+
+    return (id && set.has(`id:${id}`)) || (code && set.has(`code:${code.toLowerCase()}`));
+};
+
+window.materialsGetTransactionMaterial = function(transaction) {
+    const masterlistRows = window.materialsMasterlist || materialsMasterlist || [];
+    const transactionMaterialId = window.materialsGetTransactionMaterialId(transaction);
+    const transactionItemCode = window.materialsGetTransactionItemCode(transaction);
+
+    return masterlistRows.find(material => {
+        const materialId = window.materialsGetMaterialId(material);
+        const itemCode = window.materialsGetMaterialCode(material);
+
+        return (
+            transactionMaterialId && materialId && String(transactionMaterialId) === String(materialId)
+        ) || (
+            transactionItemCode && itemCode && String(transactionItemCode).toLowerCase() === String(itemCode).toLowerCase()
+        );
+    }) || null;
+};
+
+window.materialsGetCurrentStock = function(material) {
+    return window.materialsNumber(material?.currentStock ?? material?.current_stock ?? 0, 0);
+};
+
+window.materialsGetMinStock = function(material) {
+    return window.materialsNumber(material?.minStock ?? material?.min_stock ?? 0, 0);
+};
+
+window.materialsGetStatusLabel = function(material) {
+    const currentStock = window.materialsGetCurrentStock(material);
+    const minStock = window.materialsGetMinStock(material);
+    if (currentStock <= 0) return 'Low Stock';
+    if (currentStock <= minStock) return 'Low Stock';
+    return 'Fully Stocked';
+};
+
+window.materialsStatusBadge = function(status) {
+    if (status === 'Fully Stocked') {
+        return `<span style="background: var(--badge-bg-green, #dcfce7); color: var(--badge-text-green, #166534); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; display: inline-block;">Fully Stocked</span>`;
+    }
+
+    return `<span style="background: #ffedd5; color: var(--badge-text-orange, #ea580c); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; display: inline-block;">Low Stock</span>`;
+};
+
+window.materialsGetTransactionDepartment = function(transaction) {
+    const material = window.materialsGetTransactionMaterial(transaction);
+    return window.materialsNormalizeDepartment(
+        material?.department ||
+        material?.department_name ||
+        transaction?.department ||
+        transaction?.actualCharging ||
+        transaction?.actual_charging ||
+        transaction?.charging
+    );
+};
+
+window.materialsGetTransactionMaterialType = function(transaction) {
+    const material = window.materialsGetTransactionMaterial(transaction);
+    return window.materialsNormalizeType(
+        material?.type ||
+        material?.materialType ||
+        material?.material_type ||
+        transaction?.materialType ||
+        transaction?.material_type
+    );
+};
+
+window.materialsGetTransactionType = function(transaction) {
+    return window.materialsSafeValue(transaction?.transactionType || transaction?.transaction_type || transaction?.type, '-');
+};
+
+window.filterMaterialsMasterlistTable = function() {
+    const searchValue = window.materialsNormalizeText(document.getElementById('materialsMasterlistSearch')?.value || '');
+    const departmentFilter = window.materialsSafeValue(document.getElementById('materialsMasterlistDepartmentFilter')?.value || '');
+    const typeFilter = window.materialsSafeValue(document.getElementById('materialsMasterlistTypeFilter')?.value || '');
+    const table = document.getElementById('materialsMasterlistTable');
+    if (!table) return;
+
+    table.querySelectorAll('tbody tr').forEach(row => {
+        const rowText = window.materialsNormalizeText(row.textContent);
+        const rowDepartment = window.materialsSafeValue(row.dataset.department);
+        const rowType = window.materialsSafeValue(row.dataset.type);
+        const matchesSearch = !searchValue || rowText.includes(searchValue);
+        const matchesDepartment = !departmentFilter || rowDepartment === departmentFilter;
+        const matchesType = !typeFilter || rowType === typeFilter;
+        row.style.display = matchesSearch && matchesDepartment && matchesType ? '' : 'none';
+    });
+};
+
+window.filterMaterialsTransactionsTable = function() {
+    const searchValue = window.materialsNormalizeText(document.getElementById('materialsTransactionSearch')?.value || '');
+    const departmentFilter = window.materialsSafeValue(document.getElementById('materialsTransactionDepartmentFilter')?.value || '');
+    const typeFilter = window.materialsSafeValue(document.getElementById('materialsTransactionTypeFilter')?.value || '');
+    const table = document.getElementById('materialsTransactionsTable');
+    if (!table) return;
+
+    table.querySelectorAll('tbody tr').forEach(row => {
+        const rowText = window.materialsNormalizeText(row.textContent);
+        const rowDepartment = window.materialsSafeValue(row.dataset.department);
+        const rowType = window.materialsSafeValue(row.dataset.type);
+        const matchesSearch = !searchValue || rowText.includes(searchValue);
+        const matchesDepartment = !departmentFilter || rowDepartment === departmentFilter;
+        const matchesType = !typeFilter || rowType === typeFilter;
+        row.style.display = matchesSearch && matchesDepartment && matchesType ? '' : 'none';
+    });
+};
+
+window.renderMaterialsView = function() {
+    const projectId = window.currentProjectId || currentProjectId;
+
+    if (projectId && window.__materialsLoadedProjectId !== projectId) {
+        window.__materialsLoadedProjectId = projectId;
+
+        if (window.contentArea || typeof contentArea !== 'undefined') {
+            const targetContentArea = window.contentArea || contentArea;
+            targetContentArea.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);">Loading materials records...</div>`;
         }
 
         Promise.all([
-    typeof window.loadMaterialsMasterlistFromSupabase === 'function'
-        ? window.loadMaterialsMasterlistFromSupabase()
-        : Promise.resolve(),
-
-    typeof window.loadMaterialsTransactionsFromSupabase === 'function'
-        ? window.loadMaterialsTransactionsFromSupabase()
-        : Promise.resolve()
-]).then(() => {
-    renderMaterialsView();
-});
+            typeof window.loadMaterialsMasterlistFromSupabase === 'function' ? window.loadMaterialsMasterlistFromSupabase() : Promise.resolve(),
+            typeof window.loadMaterialsTransactionsFromSupabase === 'function' ? window.loadMaterialsTransactionsFromSupabase() : Promise.resolve()
+        ]).then(() => {
+            window.renderMaterialsView();
+        });
 
         return;
     }
 
     currentView = 'materials';
-    updateSubNavVisibility();
+    if (typeof updateSubNavVisibility === 'function') updateSubNavVisibility();
 
-            let contentHtml = '';
+    const safe = window.materialsSafeValue;
+    const masterlistRows = window.materialsMasterlist || materialsMasterlist || [];
+    const transactionRows = window.materialsTransactions || materialsTransactions || [];
+    let contentHtml = '';
 
-            if (currentMaterialsTab === 'dashboard') {
-                const totalItems = materialsMasterlist.length;
-                const lowStockItems = materialsMasterlist.filter(m => m.currentStock <= m.minStock);
-                const fullyStockedItems = materialsMasterlist.filter(m => m.currentStock > m.minStock);
-                
-                let lowStockHtml = lowStockItems.length > 0 ? lowStockItems.map(m => `
-                    <div style="padding: 16px 0; border-bottom: 1px solid var(--border-color);">
-                        <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">${m.itemName}</div>
-                        <div style="font-size: 0.75rem; color: var(--text-muted);">${m.itemCode} • ${m.department} • Stock: ${m.currentStock} • Status: <span style="color: var(--badge-text-orange);">Low Stock</span></div>
+    if (currentMaterialsTab === 'dashboard') {
+        const transactionSet = window.materialsBuildTransactionItemSet();
+        const transactedItems = masterlistRows.filter(material => window.materialsHasTransaction(material, transactionSet));
+
+        const lowStockItems = transactedItems.filter(material => {
+            const stock = window.materialsGetCurrentStock(material);
+            const minStock = window.materialsGetMinStock(material);
+            return stock <= 0 || stock <= minStock;
+        });
+
+        const fullyStockedItems = transactedItems.filter(material => {
+            const stock = window.materialsGetCurrentStock(material);
+            const minStock = window.materialsGetMinStock(material);
+            return stock > 0 && stock > minStock;
+        });
+
+        const lowStockHtml = lowStockItems.length > 0
+            ? lowStockItems.map(material => `
+                <div style="padding: 12px 0; border-bottom: 1px solid var(--border-color);">
+                    <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">${safe(material.itemName, '-')}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">
+                        ${safe(material.itemCode, '-')} • ${safe(material.department, '-')} • ${safe(material.type, '-')} •
+                        Stock: ${window.materialsGetCurrentStock(material)} • Status: <span style="color: var(--badge-text-orange, #ea580c); font-weight: 600;">Low Stock</span>
                     </div>
-                `).join('') : '<div style="color: var(--text-muted); font-size: 0.9rem; padding: 16px 0;">No low stock items.</div>';
+                </div>
+            `).join('')
+            : `<div style="color: var(--text-muted); font-size: 0.9rem; padding: 12px 0;">No low stock or out of stock items with transactions yet.</div>`;
 
-                let fullyStockedHtml = fullyStockedItems.length > 0 ? fullyStockedItems.map(m => `
-                    <div style="padding: 16px 0; border-bottom: 1px solid var(--border-color);">
-                        <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">${m.itemName}</div>
-                        <div style="font-size: 0.75rem; color: var(--text-muted);">${m.itemCode} • ${m.department} • Stock: ${m.currentStock} • Status: <span style="color: var(--badge-text-green);">Fully Stocked</span></div>
+        const fullyStockedHtml = fullyStockedItems.length > 0
+            ? fullyStockedItems.map(material => `
+                <div style="padding: 12px 0; border-bottom: 1px solid var(--border-color);">
+                    <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">${safe(material.itemName, '-')}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">
+                        ${safe(material.itemCode, '-')} • ${safe(material.department, '-')} • ${safe(material.type, '-')} •
+                        Stock: ${window.materialsGetCurrentStock(material)} • Status: <span style="color: var(--badge-text-green, #166534); font-weight: 600;">Fully Stocked</span>
                     </div>
-                `).join('') : '<div style="color: var(--text-muted); font-size: 0.9rem; padding: 16px 0;">No fully-stocked items.</div>';
+                </div>
+            `).join('')
+            : `<div style="color: var(--text-muted); font-size: 0.9rem; padding: 12px 0;">No fully stocked items with transactions yet.</div>`;
 
-                let recentTransactionsHtml = materialsTransactions.slice(0, 5).map(t => `
-                    <div style="padding: 12px 0; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+        const recentTransactionsHtml = transactionRows.length > 0
+            ? transactionRows.slice(0, 8).map(transaction => {
+                const transactionType = window.materialsGetTransactionType(transaction);
+                const isIn = String(transactionType).toUpperCase() === 'IN';
+                const qty = window.materialsNumber(transaction.quantity, 0);
+                return `
+                    <div style="padding: 12px 0; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; gap: 16px;">
                         <div>
-                            <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">${t.itemName}</div>
-                            <div style="font-size: 0.75rem; color: var(--text-muted);">${t.date} ${t.time} • ${t.transactionType} • Qty: ${t.quantity}</div>
+                            <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">${safe(transaction.itemName, '-')}</div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">${safe(transaction.itemCode, '-')} • ${safe(transaction.date, '-')} • ${transactionType}</div>
                         </div>
-                        <div style="font-weight: 700; color: ${t.transactionType === 'IN' ? 'var(--badge-text-green)' : 'var(--badge-text-orange)'};">
-                            ${t.transactionType === 'IN' ? '+' : '-'}${t.quantity}
-                        </div>
-                    </div>
-                `).join('');
-
-                contentHtml = `
-                    <div style="margin-bottom: 24px;">
-                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">Inventory overview</div>
-                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
-                            <div class="card" style="padding: 20px;">
-                                <div style="font-size: 0.9rem; color: var(--text-main); margin-bottom: 8px;">Total Items</div>
-                                <div style="font-size: 1.5rem; font-weight: 600;">${totalItems}</div>
-                            </div>
-                            <div class="card" style="padding: 20px;">
-                                <div style="font-size: 0.9rem; color: var(--text-main); margin-bottom: 8px;">Low / Out of Stock</div>
-                                <div style="font-size: 1.5rem; font-weight: 600;">${lowStockItems.length}</div>
-                            </div>
-                            <div class="card" style="padding: 20px;">
-                                <div style="font-size: 0.9rem; color: var(--text-main); margin-bottom: 8px;">Fully Stocked</div>
-                                <div style="font-size: 1.5rem; font-weight: 600;">${fullyStockedItems.length}</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;">
-                        <div class="card">
-                            <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 16px;">Low Stock / Out of Stock Items</h3>
-                            ${lowStockHtml}
-                        </div>
-                        <div class="card">
-                            <h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 16px;">Fully Stocked Items</h3>
-                            ${fullyStockedHtml}
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                            <h3 style="font-size: 1rem; font-weight: 700;">Recent Transactions</h3>
-                            <select class="form-control" style="width: auto; padding: 6px 12px;">
-                                <option>This Week</option>
-                                <option>This Month</option>
-                            </select>
-                        </div>
-                        <div>
-                            ${materialsTransactions.length === 0 ? '<div style="color: var(--text-muted); font-size: 0.9rem; padding: 16px 0;">No recent transactions.</div>' : recentTransactionsHtml}
-                        </div>
+                        <div style="font-weight: 700; color: ${isIn ? '#166534' : '#991b1b'};">${isIn ? '+' : '-'}${qty.toLocaleString()}</div>
                     </div>
                 `;
-            } else if (currentMaterialsTab === 'masterlist') {
-                let tableRows = materialsMasterlist.map(m => {
-    const status = m.currentStock <= m.minStock
-        ? '<span style="background: #ffedd5; color: var(--badge-text-orange); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Low Stock</span>'
-        : '<span style="background: var(--badge-bg-green); color: var(--badge-text-green); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Fully Stocked</span>';
+            }).join('')
+            : `<div style="color: var(--text-muted); font-size: 0.9rem; padding: 12px 0;">No recent transactions.</div>`;
 
-    return `
-        <tr style="border-bottom: 1px solid var(--border-color);">
-            <td style="padding: 16px; font-size: 0.85rem;">${m.itemCode || '-'}</td>
-            <td style="padding: 16px; font-size: 0.85rem;">${m.itemName || '-'}</td>
-            <td style="padding: 16px; font-size: 0.85rem;">${m.department || '-'}</td>
-            <td style="padding: 16px; font-size: 0.85rem;">${m.type || '-'}</td>
-            <td style="padding: 16px; font-size: 0.85rem;">${m.unit || '-'}</td>
-            <td style="padding: 16px; font-size: 0.85rem;">${m.currentStock || 0}</td>
-            <td style="padding: 16px; font-size: 0.85rem;">${m.minStock || 0}</td>
-            <td style="padding: 16px; font-size: 0.85rem;">${status}</td>
-            <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-align: right;">Actions</th>
-            <td style="padding: 16px; font-size: 0.85rem; text-align: right;">
-                <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                    <button class="btn btn-secondary" onclick="openNewMaterialModal('${m.id}')" style="padding: 4px 8px; font-size: 0.8rem;">
-                        Edit
-                    </button>
-                    <button class="btn btn-secondary" onclick="deleteMaterialRecord('${m.id}')" style="padding: 4px 8px; font-size: 0.8rem; color: var(--danger);">
-                        Delete
-                    </button>
+        contentHtml = `
+            <div style="margin-bottom: 24px;">
+                <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">Dashboard counts only materials that already have IN/OUT transactions.</div>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">
+                    <div class="card" style="padding: 20px;"><div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 700;">TOTAL ITEMS</div><div style="font-size: 1.5rem; font-weight: 700;">${transactedItems.length}</div></div>
+                    <div class="card" style="padding: 20px;"><div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 700;">LOW / OUT OF STOCK</div><div style="font-size: 1.5rem; font-weight: 700;">${lowStockItems.length}</div></div>
+                    <div class="card" style="padding: 20px;"><div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 700;">FULLY STOCKED</div><div style="font-size: 1.5rem; font-weight: 700;">${fullyStockedItems.length}</div></div>
                 </div>
-            </td>
-        </tr>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;">
+                <div class="card"><h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 16px;">Low Stock / Out of Stock Items</h3>${lowStockHtml}</div>
+                <div class="card"><h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 16px;">Fully Stocked Items</h3>${fullyStockedHtml}</div>
+            </div>
+            <div class="card"><h3 style="font-size: 1rem; font-weight: 700; margin-bottom: 16px;">Recent Transactions</h3>${recentTransactionsHtml}</div>
+        `;
+    } else if (currentMaterialsTab === 'masterlist') {
+        const tableRows = masterlistRows.length > 0
+            ? masterlistRows.map(material => {
+                const department = window.materialsNormalizeDepartment(material.department);
+                const type = window.materialsNormalizeType(material.type);
+                const currentStock = window.materialsGetCurrentStock(material);
+                const minStock = window.materialsGetMinStock(material);
+                const status = window.materialsGetStatusLabel(material);
+                return `
+                    <tr data-department="${department}" data-type="${type}" style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 16px; font-size: 0.85rem;">${safe(material.itemCode, '-')}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${safe(material.itemName, '-')}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${safe(department, '-')}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${safe(type, '-')}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${safe(material.unit, '-')}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${currentStock.toLocaleString()}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${minStock.toLocaleString()}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${window.materialsStatusBadge(status)}</td>
+                        <td style="padding: 16px; font-size: 0.85rem; text-align: right;">
+                            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                                <button class="btn btn-secondary" onclick="openNewMaterialModal('${material.id}')" style="padding: 4px 8px; font-size: 0.8rem;">Edit</button>
+                                <button class="btn btn-secondary" onclick="deleteMaterialRecord('${material.id}')" style="padding: 4px 8px; font-size: 0.8rem; color: var(--danger);">Delete</button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('')
+            : `<tr><td colspan="9" style="padding: 32px; text-align: center; color: var(--text-muted);">No materials found.</td></tr>`;
+
+        contentHtml = `
+            <div class="card" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
+                <div style="flex: 1; position: relative;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input id="materialsMasterlistSearch" type="text" placeholder="Search code, name, department, type..." oninput="filterMaterialsMasterlistTable()" style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;">
+                </div>
+                <select id="materialsMasterlistDepartmentFilter" class="form-control" onchange="filterMaterialsMasterlistTable()" style="width: auto;">
+                    <option value="">All Departments</option><option value="Civil">Civil</option><option value="Electrical">Electrical</option><option value="Mechanical">Mechanical</option><option value="SCADA">SCADA</option>
+                </select>
+                <select id="materialsMasterlistTypeFilter" class="form-control" onchange="filterMaterialsMasterlistTable()" style="width: auto;">
+                    <option value="">All Types</option><option value="Consumable">Consumable</option><option value="Non-Consumable">Non-Consumable</option>
+                </select>
+                <button class="btn btn-primary" onclick="openNewMaterialModal()">+ New Material</button>
+            </div>
+            <div class="card" style="padding: 0; overflow-x: auto;">
+                <table id="materialsMasterlistTable" style="width: 100%; border-collapse: collapse; text-align: left;">
+                    <thead style="background: var(--bg-body); border-bottom: 1px solid var(--border-color);">
+                        <tr><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Code</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Name</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Department</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Type</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Unit</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Current Stock</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Min Stock</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Status</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-align: right;">Actions</th></tr>
+                    </thead>
+                    <tbody>${tableRows}</tbody>
+                </table>
+            </div>
+        `;
+    } else if (currentMaterialsTab === 'transactions') {
+        const tableRows = transactionRows.length > 0
+            ? transactionRows.map(transaction => {
+                const material = window.materialsGetTransactionMaterial(transaction);
+                const department = window.materialsNormalizeDepartment(material?.department || transaction.department || transaction.actualCharging || transaction.actual_charging || transaction.charging);
+                const materialType = window.materialsNormalizeType(material?.type || material?.materialType || material?.material_type || transaction.materialType || transaction.material_type);
+                const transactionType = window.materialsGetTransactionType(transaction);
+                const isIn = String(transactionType).toUpperCase() === 'IN';
+                const qty = window.materialsNumber(transaction.quantity, 0);
+                return `
+                    <tr data-department="${department}" data-type="${materialType}" style="border-bottom: 1px solid var(--border-color);">
+                        <td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.date)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.time)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.mrsNo)}</td><td style="padding: 16px; font-size: 0.85rem;">${window.materialsNumber(transaction.poQty, 0).toLocaleString()}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.poNo)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.prsNo)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.charging)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.actualCharging)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.itemCode)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.itemName)}</td><td style="padding: 16px; font-size: 0.85rem;">${qty.toLocaleString()}</td>
+                        <td style="padding: 16px; font-size: 0.85rem;"><span style="padding: 4px 8px; border-radius: 999px; font-weight: 700; font-size: 0.75rem; background: ${isIn ? '#dcfce7' : '#fee2e2'}; color: ${isIn ? '#166534' : '#991b1b'};">${transactionType}</span></td>
+                        <td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.accountabilityNo)}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(materialType, '-')}</td><td style="padding: 16px; font-size: 0.85rem;">${safe(transaction.remarks, '-')}</td>
+                        <td style="padding: 16px; font-size: 0.85rem; text-align: right;"><div style="display: flex; gap: 8px; justify-content: flex-end;"><button class="btn btn-secondary" onclick="openNewTransactionModal('${transaction.id}')" style="padding: 4px 8px; font-size: 0.8rem;">Edit</button><button class="btn btn-secondary" onclick="deleteMaterialTransaction('${transaction.id}')" style="padding: 4px 8px; font-size: 0.8rem; color: var(--danger);">Delete</button></div></td>
+                    </tr>
+                `;
+            }).join('')
+            : `<tr><td colspan="16" style="padding: 32px; text-align: center; color: var(--text-muted);">No material transactions found.</td></tr>`;
+
+        contentHtml = `
+            <div class="card" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
+                <div style="flex: 1; position: relative;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><input id="materialsTransactionSearch" type="text" placeholder="Search item, item code, PO no, PRS no..." oninput="filterMaterialsTransactionsTable()" style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;"></div>
+                <select id="materialsTransactionTypeFilter" class="form-control" onchange="filterMaterialsTransactionsTable()" style="width: auto;"><option value="">All Types</option><option value="Consumable">Consumable</option><option value="Non-Consumable">Non-Consumable</option></select>
+                <button class="btn btn-primary" onclick="openNewTransactionModal()">+ New Transaction</button>
+            </div>
+            <div class="card" style="padding: 0; overflow-x: auto;"><table id="materialsTransactionsTable" style="width: 100%; border-collapse: collapse; text-align: left;"><thead style="background: var(--bg-body); border-bottom: 1px solid var(--border-color);"><tr><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Date</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Time</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">MRS/Withdrawal No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PO Qty</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PO No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PRS No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Charging</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Actual Charging</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Code</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Name</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Quantity</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Transaction Type</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Accountability No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Type</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Remarks</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-align: right;">Actions</th></tr></thead><tbody>${tableRows}</tbody></table></div>
+        `;
+    }
+
+    const targetContentArea = window.contentArea || contentArea;
+    targetContentArea.innerHTML = `
+        <div style="padding: 24px;">
+            <div class="card" style="margin-bottom: 24px;">
+                <div style="display: flex; gap: 32px;">
+                    <button onclick="currentMaterialsTab='dashboard'; renderMaterialsView();" style="padding: 12px 0; background: none; border: none; font-weight: 700; color: ${currentMaterialsTab === 'dashboard' ? 'var(--primary)' : 'var(--text-muted)'}; cursor: pointer;">Dashboard</button>
+                    <button onclick="currentMaterialsTab='masterlist'; renderMaterialsView();" style="padding: 12px 0; background: none; border: none; font-weight: 700; color: ${currentMaterialsTab === 'masterlist' ? 'var(--primary)' : 'var(--text-muted)'}; cursor: pointer;">Masterlist</button>
+                    <button onclick="currentMaterialsTab='transactions'; renderMaterialsView();" style="padding: 12px 0; background: none; border: none; font-weight: 700; color: ${currentMaterialsTab === 'transactions' ? 'var(--primary)' : 'var(--text-muted)'}; cursor: pointer;">Transactions</button>
+                </div>
+            </div>
+            ${contentHtml}
+        </div>
     `;
-}).join('');
+};
 
-                contentHtml = `
-                    <div class="card" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
-                        <div style="flex: 1; position: relative;">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                            <input type="text" placeholder="Search code or name..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;">
-                        </div>
-                        <select class="form-control" style="width: auto;">
-                            <option>All Departments</option>
-                            <option>Civil</option>
-                            <option>Electrical</option>
-                        </select>
-                        <select class="form-control" style="width: auto;">
-                            <option>All Types</option>
-                            <option>Consumable</option>
-                            <option>Equipment</option>
-                        </select>
-                        <button class="btn btn-primary" onclick="openNewMaterialModal()">+ New Material</button>
-                    </div>
-                    <div class="card" style="padding: 0; overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                            <thead style="background: var(--bg-body); border-bottom: 1px solid var(--border-color);">
-                                <tr>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Code</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Name</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Department</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Type</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Unit</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Current Stock</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Min Stock</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${tableRows}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
-            } else if (currentMaterialsTab === 'transactions') {
-                let tableRows = materialsTransactions.map(t => {
-                    return `
-                        <tr style="border-bottom: 1px solid var(--border-color);">
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.date}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.time}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.mrsNo}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.poQty}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.poNo}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.prsNo}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.charging}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.actualCharging}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.itemCode}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.itemName}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.quantity}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.transactionType}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.accountabilityNo}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.type}</td>
-                            <td style="padding: 16px; font-size: 0.85rem;">${t.remarks || '-'}</td>
-                            
-<td style="padding: 16px; font-size: 0.85rem; text-align: right;">
-    <div style="display: flex; gap: 8px; justify-content: flex-end;">
-        <button class="btn btn-secondary" onclick="openNewTransactionModal('${t.id}')" style="padding: 4px 8px; font-size: 0.8rem;">
-            Edit
-        </button>
-        <button class="btn btn-secondary" onclick="deleteMaterialTransaction('${t.id}')" style="padding: 4px 8px; font-size: 0.8rem; color: var(--danger);">
-            Delete
-        </button>
-    </div>
-</td>
-</tr>
-                    `;
-                }).join('');
-
-                contentHtml = `
-                    <div class="card" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
-                        <div style="flex: 1; position: relative;">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                            <input type="text" placeholder="Search item, PO no, PRS no..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;">
-                        </div>
-                        <select class="form-control" style="width: auto;">
-                            <option>All Types</option>
-                            <option>IN</option>
-                            <option>OUT</option>
-                        </select>
-                        <button class="btn btn-primary" onclick="openNewTransactionModal()">+ New Transaction</button>
-                    </div>
-                    <div class="card" style="padding: 0; overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; text-align: left;">
-                            <thead style="background: var(--bg-body); border-bottom: 1px solid var(--border-color);">
-                                <tr>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Date</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Time</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">MRS/Withdrawal No.</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PO Qty</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PO No.</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PRS No.</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Charging</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Actual Charging</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Code</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Name</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Quantity</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Transaction Type</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Accountability No.</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Type</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Remarks</th>
-                                    <th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-align: right;">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${tableRows}
-                            </tbody>
-                        </table>
-                    </div>
-                `;
-            }
-
-            contentArea.innerHTML = `
-                <div class="view-header" style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px;">
-                    <div>
-                        <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--text-main); margin-bottom: 4px;">Materials</h1>
-                        <div style="color: var(--text-muted); font-size: 0.9rem;">Manage project inventory and stock movements</div>
-                    </div>
-                </div>
-                <div class="card" style="margin-bottom: 24px; display: flex; gap: 8px; padding: 8px;">
-                    <button class="btn" onclick="setMaterialsTab('dashboard')" style="border: none; background: ${currentMaterialsTab === 'dashboard' ? '#fff' : 'transparent'}; color: ${currentMaterialsTab === 'dashboard' ? '#0f172a' : 'var(--badge-text-gray)'}; font-weight: ${currentMaterialsTab === 'dashboard' ? '700' : '700'}; box-shadow: var(--shadow-sm)' : 'none'}; border-radius: 6px; padding: 8px 16px;">Dashboard</button>
-                    <button class="btn" onclick="setMaterialsTab('masterlist')" style="border: none; background: ${currentMaterialsTab === 'masterlist' ? '#fff' : 'transparent'}; color: ${currentMaterialsTab === 'masterlist' ? 'var(--badge-text-blue)' : '#0f172a'}; font-weight: ${currentMaterialsTab === 'masterlist' ? '700' : '700'}; box-shadow: var(--shadow-sm)' : 'none'}; border-radius: 6px; padding: 8px 16px;">Masterlist</button>
-                    <button class="btn" onclick="setMaterialsTab('transactions')" style="border: none; background: ${currentMaterialsTab === 'transactions' ? '#fff' : 'transparent'}; color: ${currentMaterialsTab === 'transactions' ? 'var(--badge-text-blue)' : '#0f172a'}; font-weight: ${currentMaterialsTab === 'transactions' ? '700' : '700'}; box-shadow: var(--shadow-sm)' : 'none'}; border-radius: 6px; padding: 8px 16px;">Transactions</button>
-                </div>
-                ${contentHtml}
-            `;
-        };
 
         window.renderFuelView = function() {
     const fuelProjectId = window.currentProjectId || currentProjectId;
@@ -14201,5 +14402,1210 @@ document.addEventListener('fullscreenchange', () => {
     }
 });
 </script>
+
+<script>
+// =========================================================
+// MATERIALS PAGE PATCH V3
+// Fixes:
+// 1. Blank Item Code / Item Name / Type in Masterlist when Supabase columns use different header styles.
+// 2. Transaction tab department/type filters by resolving the linked material record more reliably.
+// 3. Transaction display falls back to linked masterlist item code/name/type when transaction row is incomplete.
+// =========================================================
+(function installMaterialsPatchV3(){
+    function clean(value, fallback = '') {
+        if (value === null || value === undefined) return fallback;
+        const text = String(value).trim();
+        if (!text || ['null', 'undefined', 'nan'].includes(text.toLowerCase())) return fallback;
+        return text;
+    }
+
+    function num(value, fallback = 0) {
+        const n = Number(String(value ?? '').replace(/,/g, ''));
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    function keySignature(value) {
+        return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function firstValue(row, keys, fallback = '') {
+        if (!row) return fallback;
+        for (const key of keys) {
+            if (row[key] !== undefined && row[key] !== null && clean(row[key]) !== '') return row[key];
+        }
+        const wanted = new Set(keys.map(keySignature));
+        for (const actualKey of Object.keys(row)) {
+            if (wanted.has(keySignature(actualKey)) && row[actualKey] !== undefined && row[actualKey] !== null && clean(row[actualKey]) !== '') {
+                return row[actualKey];
+            }
+        }
+        return fallback;
+    }
+
+    function normText(value) {
+        return clean(value).toLowerCase().replace(/[\s_\-]+/g, ' ').trim();
+    }
+
+    function normDepartment(value) {
+        const text = normText(value);
+        if (text.includes('civil')) return 'Civil';
+        if (text.includes('electrical')) return 'Electrical';
+        if (text.includes('mechanical') || text.includes('mechanicall')) return 'Mechanical';
+        if (text.includes('scada')) return 'SCADA';
+        return clean(value);
+    }
+
+    function normType(value) {
+        const text = normText(value);
+        if (!text) return '';
+        if (text.includes('non consumable') || text.includes('nonconsumable') || text === 'non consumables') return 'Non-Consumable';
+        if (text.includes('consumable') || text === 'consumables') return 'Consumable';
+        return clean(value);
+    }
+
+    function getProjectId() {
+        return window.currentProjectId || (typeof currentProjectId !== 'undefined' ? currentProjectId : null);
+    }
+
+    function getMasterlist() {
+        return window.materialsMasterlist || (typeof materialsMasterlist !== 'undefined' ? materialsMasterlist : []) || [];
+    }
+
+    function setMasterlist(rows) {
+        window.materialsMasterlist = rows;
+        if (typeof materialsMasterlist !== 'undefined') materialsMasterlist = rows;
+    }
+
+    function getTransactions() {
+        return window.materialsTransactions || (typeof materialsTransactions !== 'undefined' ? materialsTransactions : []) || [];
+    }
+
+    function setTransactions(rows) {
+        window.materialsTransactions = rows;
+        if (typeof materialsTransactions !== 'undefined') materialsTransactions = rows;
+    }
+
+    const ITEM_CODE_KEYS = [
+        'item_code', 'itemCode', 'item code', 'Item Code', 'code',
+        'material_code', 'materialCode', 'material code', 'Material Code'
+    ];
+    const ITEM_NAME_KEYS = [
+        'item_name', 'itemName', 'item name', 'Item Name', 'name',
+        'material_name', 'materialName', 'material name', 'Material Name',
+        'item_description', 'itemDescription', 'item description', 'Item Description',
+        'description', 'particulars', 'item_particulars', 'itemParticulars'
+    ];
+    const TYPE_KEYS = [
+        'material_type', 'materialType', 'material type', 'Material Type',
+        'type', 'Type', 'item_type', 'itemType', 'item type', 'Item Type',
+        'classification', 'category_type'
+    ];
+    const DEPT_KEYS = ['department', 'Department', 'dept', 'Dept', 'discipline', 'category'];
+    const UNIT_KEYS = ['unit', 'Unit', 'units', 'Units', 'uom', 'UOM'];
+
+    window.materialsSafeValue = clean;
+    window.cleanMaterialsValue = clean;
+    window.materialsNumber = num;
+    window.cleanMaterialsNumber = num;
+    window.materialsNormalizeText = normText;
+    window.materialsNormalizeDepartment = normDepartment;
+    window.materialsNormalizeType = normType;
+    window.normalizeMaterialsDepartment = normDepartment;
+    window.normalizeMaterialsType = normType;
+
+    function mapMaterialRow(row) {
+        const itemCode = clean(firstValue(row, ITEM_CODE_KEYS));
+        const itemName = clean(firstValue(row, ITEM_NAME_KEYS));
+        const department = normDepartment(firstValue(row, DEPT_KEYS));
+        const type = normType(firstValue(row, TYPE_KEYS));
+        const currentStock = num(firstValue(row, ['current_stock', 'currentStock', 'current stock', 'stock', 'total_stock', 'totalStock']), 0);
+        const minStock = num(firstValue(row, ['min_stock', 'minStock', 'min stock', 'minimum_stock', 'minimumStock']), 0);
+
+        return {
+            ...row,
+            id: row.id,
+            projectId: row.project_id || row.projectId,
+            itemCode,
+            itemName,
+            department,
+            type,
+            unit: clean(firstValue(row, UNIT_KEYS)),
+            currentStock,
+            minStock,
+            status: clean(firstValue(row, ['status', 'Status'])),
+            createdBy: row.created_by || row.createdBy || null,
+            item_code: itemCode,
+            item_name: itemName,
+            material_type: type,
+            current_stock: currentStock,
+            min_stock: minStock
+        };
+    }
+
+    function mapTransactionRow(row) {
+        const itemCode = clean(firstValue(row, ITEM_CODE_KEYS));
+        const itemName = clean(firstValue(row, ITEM_NAME_KEYS));
+        const txType = clean(firstValue(row, ['transaction_type', 'transactionType', 'transaction type', 'Transaction Type', 'type']));
+        return {
+            ...row,
+            id: row.id,
+            projectId: row.project_id || row.projectId,
+            materialId: clean(firstValue(row, ['material_id', 'materialId', 'material id', 'Material ID'])),
+            date: clean(firstValue(row, ['transaction_date', 'transactionDate', 'transaction date', 'date', 'Date'])),
+            time: clean(firstValue(row, ['transaction_time', 'transactionTime', 'transaction time', 'time', 'Time'])),
+            mrsNo: clean(firstValue(row, ['mrs_withdrawal_no', 'mrsWithdrawalNo', 'mrs withdrawal no', 'mrs_no', 'mrsNo', 'MRS/Withdrawal No.'])),
+            poQty: num(firstValue(row, ['po_qty', 'poQty', 'po qty', 'po_quantity', 'poQuantity']), 0),
+            poNo: clean(firstValue(row, ['po_no', 'poNo', 'po no', 'PO No.'])),
+            prsNo: clean(firstValue(row, ['prs_no', 'prsNo', 'prs no', 'PRS No.'])),
+            charging: clean(firstValue(row, ['charging', 'Charging'])),
+            actualCharging: clean(firstValue(row, ['actual_charging', 'actualCharging', 'actual charging', 'Actual Charging'])),
+            itemCode,
+            itemName,
+            quantity: num(firstValue(row, ['quantity', 'qty', 'Quantity', 'Qty']), 0),
+            transactionType: txType,
+            accountabilityNo: clean(firstValue(row, ['accountability', 'accountability_no', 'accountabilityNo', 'accountability no', 'Accountability No.'])),
+            remarks: clean(firstValue(row, ['remarks', 'remark', 'Remarks'])),
+            material_id: clean(firstValue(row, ['material_id', 'materialId', 'material id', 'Material ID'])),
+            item_code: itemCode,
+            item_name: itemName,
+            transaction_type: txType
+        };
+    }
+
+    window.loadMaterialsMasterlistFromSupabase = async function() {
+        const projectId = getProjectId();
+        if (!projectId) {
+            console.warn('No current project selected. Cannot load materials masterlist.');
+            return;
+        }
+        if (!window.supabase) {
+            console.warn('Supabase is not available. Cannot load materials masterlist.');
+            return;
+        }
+
+        const { data, error } = await window.supabase
+            .from('materials_masterlist')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', { ascending: true });
+
+        console.log('LOAD MATERIALS MASTERLIST DATA:', data);
+        console.log('LOAD MATERIALS MASTERLIST ERROR:', error);
+
+        if (error) {
+            console.error(error);
+            window.showToast?.('Failed to load materials masterlist.', 'error');
+            return;
+        }
+
+        setMasterlist((data || []).map(mapMaterialRow));
+        console.log('MAPPED MATERIALS MASTERLIST:', getMasterlist());
+    };
+
+    window.loadMaterialsTransactionsFromSupabase = async function() {
+        const projectId = getProjectId();
+        if (!projectId) {
+            console.warn('No current project selected. Cannot load material transactions.');
+            return;
+        }
+        if (!window.supabase) {
+            console.warn('Supabase is not available. Cannot load material transactions.');
+            return;
+        }
+
+        const { data, error } = await window.supabase
+            .from('materials_transactions')
+            .select('*')
+            .eq('project_id', projectId)
+            .order('created_at', { ascending: true });
+
+        console.log('LOAD MATERIAL TRANSACTIONS DATA:', data);
+        console.log('LOAD MATERIAL TRANSACTIONS ERROR:', error);
+
+        if (error) {
+            console.error(error);
+            window.showToast?.('Failed to load material transactions.', 'error');
+            return;
+        }
+
+        setTransactions((data || []).map(mapTransactionRow));
+        console.log('MAPPED MATERIAL TRANSACTIONS:', getTransactions());
+    };
+
+    window.materialsGetMaterialId = function(material) {
+        return clean(firstValue(material, ['id', 'materialId', 'material_id', 'material id']));
+    };
+
+    window.materialsGetMaterialCode = function(material) {
+        return clean(firstValue(material, ['itemCode', 'item_code', 'item code', 'materialCode', 'material_code', 'material code']));
+    };
+
+    window.materialsGetTransactionMaterialId = function(transaction) {
+        return clean(firstValue(transaction, ['materialId', 'material_id', 'material id']));
+    };
+
+    window.materialsGetTransactionItemCode = function(transaction) {
+        return clean(firstValue(transaction, ['itemCode', 'item_code', 'item code', 'materialCode', 'material_code', 'material code']));
+    };
+
+    window.materialsGetTransactionType = function(transaction) {
+        return clean(firstValue(transaction, ['transactionType', 'transaction_type', 'transaction type', 'type']), '-');
+    };
+
+    window.materialsGetTransactionMaterial = function(transaction) {
+        const materialId = window.materialsGetTransactionMaterialId(transaction);
+        const itemCode = window.materialsGetTransactionItemCode(transaction).toLowerCase();
+        const itemName = clean(firstValue(transaction, ['itemName', 'item_name', 'item name'])).toLowerCase();
+
+        return getMasterlist().find(material => {
+            const mId = window.materialsGetMaterialId(material);
+            const mCode = window.materialsGetMaterialCode(material).toLowerCase();
+            const mName = clean(firstValue(material, ['itemName', 'item_name', 'item name'])).toLowerCase();
+            return (materialId && mId && String(materialId) === String(mId)) ||
+                   (itemCode && mCode && itemCode === mCode) ||
+                   (itemName && mName && itemName === mName);
+        }) || null;
+    };
+
+    window.materialsGetTransactionDepartment = function(transaction) {
+        const material = window.materialsGetTransactionMaterial(transaction);
+        return normDepartment(material?.department || transaction.department || transaction.actualCharging || transaction.actual_charging || transaction.charging);
+    };
+
+    window.materialsGetTransactionMaterialType = function(transaction) {
+        const material = window.materialsGetTransactionMaterial(transaction);
+        return normType(material?.type || material?.material_type || transaction.materialType || transaction.material_type || transaction.itemType || transaction.item_type);
+    };
+
+    window.materialsGetCurrentStock = function(material) {
+        return num(firstValue(material, ['currentStock', 'current_stock', 'current stock', 'stock', 'total_stock', 'totalStock']), 0);
+    };
+
+    window.materialsGetMinStock = function(material) {
+        return num(firstValue(material, ['minStock', 'min_stock', 'min stock', 'minimum_stock', 'minimumStock']), 0);
+    };
+
+    window.materialsGetStatusLabel = function(material) {
+        const stock = window.materialsGetCurrentStock(material);
+        const min = window.materialsGetMinStock(material);
+        if (stock <= 0) return 'Low Stock';
+        if (stock <= min) return 'Low Stock';
+        return 'Fully Stocked';
+    };
+
+    window.materialsBuildTransactionItemSet = function() {
+        const set = new Set();
+        getTransactions().forEach(transaction => {
+            const txType = window.materialsGetTransactionType(transaction).toUpperCase();
+            if (txType !== 'IN' && txType !== 'OUT') return;
+            const id = window.materialsGetTransactionMaterialId(transaction);
+            const code = window.materialsGetTransactionItemCode(transaction);
+            if (id) set.add('id:' + id);
+            if (code) set.add('code:' + code.toLowerCase());
+        });
+        return set;
+    };
+
+    window.materialsHasTransaction = function(material, set = null) {
+        const txSet = set || window.materialsBuildTransactionItemSet();
+        const id = window.materialsGetMaterialId(material);
+        const code = window.materialsGetMaterialCode(material);
+        return (id && txSet.has('id:' + id)) || (code && txSet.has('code:' + code.toLowerCase()));
+    };
+
+    window.filterMaterialsMasterlistTable = function() {
+        const search = normText(document.getElementById('materialsMasterlistSearch')?.value || '');
+        const department = clean(document.getElementById('materialsMasterlistDepartmentFilter')?.value || '');
+        const type = clean(document.getElementById('materialsMasterlistTypeFilter')?.value || '');
+        const table = document.getElementById('materialsMasterlistTable');
+        if (!table) return;
+        table.querySelectorAll('tbody tr').forEach(row => {
+            const rowText = normText(row.textContent);
+            const rowDepartment = clean(row.dataset.department);
+            const rowType = clean(row.dataset.type);
+            row.style.display = (!search || rowText.includes(search)) && (!department || rowDepartment === department) && (!type || rowType === type) ? '' : 'none';
+        });
+    };
+
+    window.filterMaterialsTransactionsTable = function() {
+        const search = normText(document.getElementById('materialsTransactionSearch')?.value || '');
+        const department = clean(document.getElementById('materialsTransactionDepartmentFilter')?.value || '');
+        const type = clean(document.getElementById('materialsTransactionTypeFilter')?.value || '');
+        const table = document.getElementById('materialsTransactionsTable');
+        if (!table) return;
+        table.querySelectorAll('tbody tr').forEach(row => {
+            const rowText = normText(row.textContent);
+            const rowDepartment = clean(row.dataset.department);
+            const rowType = clean(row.dataset.type);
+            row.style.display = (!search || rowText.includes(search)) && (!department || rowDepartment === department) && (!type || rowType === type) ? '' : 'none';
+        });
+    };
+
+    const oldRenderMaterialsView = window.renderMaterialsView;
+    if (typeof oldRenderMaterialsView === 'function') {
+        window.renderMaterialsView = function patchedRenderMaterialsView() {
+            oldRenderMaterialsView.apply(this, arguments);
+
+            // After the existing render creates rows, repair blank cells and data filters using linked records.
+            setTimeout(() => {
+                const masterTable = document.getElementById('materialsMasterlistTable');
+                if (masterTable) {
+                    masterTable.querySelectorAll('tbody tr').forEach((row, index) => {
+                        const material = getMasterlist()[index];
+                        if (!material || row.children.length < 9) return;
+                        const department = normDepartment(material.department);
+                        const type = normType(material.type);
+                        row.dataset.department = department;
+                        row.dataset.type = type;
+                        row.children[0].textContent = clean(material.itemCode, '-');
+                        row.children[1].textContent = clean(material.itemName, '-');
+                        row.children[2].textContent = clean(department, '-');
+                        row.children[3].textContent = clean(type, '-');
+                    });
+                }
+
+                const txTable = document.getElementById('materialsTransactionsTable');
+                if (txTable) {
+                    txTable.querySelectorAll('tbody tr').forEach((row, index) => {
+                        const tx = getTransactions()[index];
+                        if (!tx || row.children.length < 16) return;
+                        const material = window.materialsGetTransactionMaterial(tx);
+                        const itemCode = clean(tx.itemCode || material?.itemCode, '-');
+                        const itemName = clean(tx.itemName || material?.itemName, '-');
+                        const department = normDepartment(material?.department || tx.department || tx.actualCharging || tx.actual_charging || tx.charging);
+                        const type = normType(material?.type || material?.material_type || tx.materialType || tx.material_type);
+                        row.dataset.department = department;
+                        row.dataset.type = type;
+                        row.children[8].textContent = itemCode;
+                        row.children[9].textContent = itemName;
+                        row.children[13].textContent = clean(type, '-');
+                    });
+                }
+            }, 0);
+        };
+    }
+
+    console.log('Materials patch v3 installed.');
+})();
+</script>
+
+
+
+<script>
+(function installMaterialsPatchV4(){
+    if (window.__materialsPatchV4Installed) return;
+    window.__materialsPatchV4Installed = true;
+
+    function clean(value, fallback = '') {
+        if (value === null || value === undefined) return fallback;
+        const text = String(value).trim();
+        if (!text || ['null', 'undefined', 'nan'].includes(text.toLowerCase())) return fallback;
+        return text;
+    }
+
+    function num(value, fallback = 0) {
+        const n = Number(String(value ?? '').replace(/,/g, ''));
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    function keySignature(value) {
+        return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function firstValue(row, keys, fallback = '') {
+        if (!row) return fallback;
+        for (const key of keys) {
+            if (row[key] !== undefined && row[key] !== null && clean(row[key]) !== '') return row[key];
+        }
+        const wanted = new Set(keys.map(keySignature));
+        for (const actualKey of Object.keys(row)) {
+            if (wanted.has(keySignature(actualKey)) && row[actualKey] !== undefined && row[actualKey] !== null && clean(row[actualKey]) !== '') {
+                return row[actualKey];
+            }
+        }
+        return fallback;
+    }
+
+    function normText(value) {
+        return clean(value).toLowerCase().replace(/[\s_\-]+/g, ' ').trim();
+    }
+
+    function normDepartment(value) {
+        const text = normText(value);
+        if (text.includes('civil')) return 'Civil';
+        if (text.includes('electrical')) return 'Electrical';
+        if (text.includes('mechanical') || text.includes('mechanicall')) return 'Mechanical';
+        if (text.includes('scada')) return 'SCADA';
+        return clean(value);
+    }
+
+    function normType(value) {
+        const text = normText(value);
+        if (!text) return '';
+        if (text.includes('non consumable') || text.includes('nonconsumable') || text.includes('non consumables')) return 'Non-Consumable';
+        if (text.includes('consumable') || text.includes('consumables')) return 'Consumable';
+        return clean(value);
+    }
+
+    const ITEM_CODE_KEYS = ['itemCode','item_code','item code','Item Code','code','materialCode','material_code','material code','Material Code'];
+    const ITEM_NAME_KEYS = ['itemName','item_name','item name','Item Name','name','materialName','material_name','material name','Material Name','itemDescription','item_description','item description','description','particulars','itemParticulars','item_particulars'];
+    const TYPE_KEYS = ['type','Type','materialType','material_type','material type','Material Type','itemType','item_type','item type','Item Type','classification','category_type'];
+    const DEPT_KEYS = ['department','Department','dept','Dept','discipline','category'];
+    const UNIT_KEYS = ['unit','Unit','units','Units','uom','UOM'];
+
+    function getMasterlistRaw() {
+        return window.materialsMasterlist || (typeof materialsMasterlist !== 'undefined' ? materialsMasterlist : []) || [];
+    }
+
+    function getTransactionsRaw() {
+        return window.materialsTransactions || (typeof materialsTransactions !== 'undefined' ? materialsTransactions : []) || [];
+    }
+
+    function setMasterlist(rows) {
+        window.materialsMasterlist = rows;
+        if (typeof materialsMasterlist !== 'undefined') materialsMasterlist = rows;
+    }
+
+    function setTransactions(rows) {
+        window.materialsTransactions = rows;
+        if (typeof materialsTransactions !== 'undefined') materialsTransactions = rows;
+    }
+
+    function mapMaterial(row) {
+        const itemCode = clean(firstValue(row, ITEM_CODE_KEYS));
+        const itemName = clean(firstValue(row, ITEM_NAME_KEYS));
+        const department = normDepartment(firstValue(row, DEPT_KEYS));
+        const type = normType(firstValue(row, TYPE_KEYS));
+        const currentStock = num(firstValue(row, ['currentStock','current_stock','current stock','stock','totalStock','total_stock']), 0);
+        const minStock = num(firstValue(row, ['minStock','min_stock','min stock','minimumStock','minimum_stock']), 0);
+        return {
+            ...row,
+            id: row?.id,
+            projectId: row?.project_id || row?.projectId,
+            itemCode,
+            itemName,
+            department,
+            type,
+            unit: clean(firstValue(row, UNIT_KEYS)),
+            currentStock,
+            minStock,
+            item_code: itemCode,
+            item_name: itemName,
+            material_type: type,
+            current_stock: currentStock,
+            min_stock: minStock
+        };
+    }
+
+    function materialId(material) {
+        return clean(firstValue(material, ['id','materialId','material_id','material id']));
+    }
+
+    function materialCode(material) {
+        return clean(firstValue(material, ITEM_CODE_KEYS));
+    }
+
+    function findLinkedMaterial(tx, masterlist) {
+        const txMaterialId = clean(firstValue(tx, ['materialId','material_id','material id','Material ID']));
+        const txCode = clean(firstValue(tx, ITEM_CODE_KEYS)).toLowerCase();
+        const txName = clean(firstValue(tx, ITEM_NAME_KEYS)).toLowerCase();
+        return (masterlist || []).find(material => {
+            const mId = materialId(material);
+            const mCode = materialCode(material).toLowerCase();
+            const mName = clean(firstValue(material, ITEM_NAME_KEYS)).toLowerCase();
+            return (txMaterialId && mId && String(txMaterialId) === String(mId)) ||
+                   (txCode && mCode && txCode === mCode) ||
+                   (txName && mName && txName === mName);
+        }) || null;
+    }
+
+    function mapTransaction(row, masterlist) {
+        const linked = findLinkedMaterial(row, masterlist);
+        const itemCode = clean(firstValue(row, ITEM_CODE_KEYS)) || clean(linked?.itemCode || linked?.item_code);
+        const itemName = clean(firstValue(row, ITEM_NAME_KEYS)) || clean(linked?.itemName || linked?.item_name);
+        const materialType = normType(firstValue(row, TYPE_KEYS) || linked?.type || linked?.material_type);
+        const department = normDepartment(firstValue(row, DEPT_KEYS) || linked?.department || row?.actualCharging || row?.actual_charging || row?.charging);
+        const txType = clean(firstValue(row, ['transactionType','transaction_type','transaction type','Transaction Type','type']));
+        return {
+            ...row,
+            id: row?.id,
+            projectId: row?.project_id || row?.projectId,
+            materialId: clean(firstValue(row, ['materialId','material_id','material id','Material ID'])),
+            material_id: clean(firstValue(row, ['materialId','material_id','material id','Material ID'])),
+            date: clean(firstValue(row, ['date','Date','transactionDate','transaction_date','transaction date'])),
+            time: clean(firstValue(row, ['time','Time','transactionTime','transaction_time','transaction time'])),
+            mrsNo: clean(firstValue(row, ['mrsNo','mrs_no','mrsWithdrawalNo','mrs_withdrawal_no','mrs withdrawal no','MRS/Withdrawal No.'])),
+            poQty: num(firstValue(row, ['poQty','po_qty','po qty','poQuantity','po_quantity']), 0),
+            poNo: clean(firstValue(row, ['poNo','po_no','po no','PO No.'])),
+            prsNo: clean(firstValue(row, ['prsNo','prs_no','prs no','PRS No.'])),
+            charging: clean(firstValue(row, ['charging','Charging'])),
+            actualCharging: clean(firstValue(row, ['actualCharging','actual_charging','actual charging','Actual Charging'])),
+            itemCode,
+            itemName,
+            item_code: itemCode,
+            item_name: itemName,
+            quantity: num(firstValue(row, ['quantity','qty','Quantity','Qty']), 0),
+            transactionType: txType,
+            transaction_type: txType,
+            accountabilityNo: clean(firstValue(row, ['accountabilityNo','accountability_no','accountability no','accountability','Accountability No.'])),
+            remarks: clean(firstValue(row, ['remarks','remark','Remarks'])),
+            department,
+            materialType,
+            material_type: materialType,
+            type: materialType || txType
+        };
+    }
+
+    function normalizeMaterialsStore() {
+        const normalizedMasterlist = getMasterlistRaw().map(mapMaterial);
+        setMasterlist(normalizedMasterlist);
+        const normalizedTransactions = getTransactionsRaw().map(row => mapTransaction(row, normalizedMasterlist));
+        setTransactions(normalizedTransactions);
+        return { normalizedMasterlist, normalizedTransactions };
+    }
+
+    window.normalizeMaterialsStore = normalizeMaterialsStore;
+
+    const previousLoadMasterlist = window.loadMaterialsMasterlistFromSupabase;
+    if (typeof previousLoadMasterlist === 'function') {
+        window.loadMaterialsMasterlistFromSupabase = async function patchedLoadMaterialsMasterlistFromSupabase() {
+            const result = await previousLoadMasterlist.apply(this, arguments);
+            normalizeMaterialsStore();
+            return result;
+        };
+    }
+
+    const previousLoadTransactions = window.loadMaterialsTransactionsFromSupabase;
+    if (typeof previousLoadTransactions === 'function') {
+        window.loadMaterialsTransactionsFromSupabase = async function patchedLoadMaterialsTransactionsFromSupabase() {
+            const result = await previousLoadTransactions.apply(this, arguments);
+            normalizeMaterialsStore();
+            return result;
+        };
+    }
+
+    const previousRender = window.renderMaterialsView;
+    if (typeof previousRender === 'function') {
+        window.renderMaterialsView = function patchedRenderMaterialsViewV4() {
+            normalizeMaterialsStore();
+            const result = previousRender.apply(this, arguments);
+
+            // Some legacy tab changes redraw the HTML after data is already loaded.
+            // Run a second pass after redraw so the display and filters never fall back to '-'.
+            setTimeout(() => {
+                normalizeMaterialsStore();
+                if (typeof window.filterMaterialsMasterlistTable === 'function') window.filterMaterialsMasterlistTable();
+                if (typeof window.filterMaterialsTransactionsTable === 'function') window.filterMaterialsTransactionsTable();
+            }, 25);
+
+            return result;
+        };
+    }
+
+    console.log('Materials patch v4 installed: normalized data before every tab render.');
+})();
+</script>
+
+
+
+<script>
+(function installMaterialsPatchV5TransactionFilters(){
+    if (window.__materialsPatchV5TransactionFiltersInstalled) return;
+    window.__materialsPatchV5TransactionFiltersInstalled = true;
+
+    function clean(value, fallback = '') {
+        if (value === null || value === undefined) return fallback;
+        const text = String(value).trim();
+        if (!text || ['null', 'undefined', 'nan', '-'].includes(text.toLowerCase())) return fallback;
+        return text;
+    }
+
+    function normalizeText(value) {
+        return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    function normalizeDepartment(value) {
+        const text = normalizeText(value);
+        if (text.includes('civil')) return 'Civil';
+        if (text.includes('electrical')) return 'Electrical';
+        if (text.includes('mechanical') || text.includes('mechanicall')) return 'Mechanical';
+        if (text.includes('scada')) return 'SCADA';
+        return clean(value);
+    }
+
+    function normalizeType(value) {
+        const text = normalizeText(value);
+        if (!text) return '';
+        if (text.includes('non') && text.includes('consumable')) return 'Non-Consumable';
+        if (text.includes('nonconsumable')) return 'Non-Consumable';
+        if (text.includes('consumable')) return 'Consumable';
+        return clean(value);
+    }
+
+    function getMasterlist() {
+        return window.materialsMasterlist || (typeof materialsMasterlist !== 'undefined' ? materialsMasterlist : []) || [];
+    }
+
+    function getTransactions() {
+        return window.materialsTransactions || (typeof materialsTransactions !== 'undefined' ? materialsTransactions : []) || [];
+    }
+
+    function valueFrom(row, keys) {
+        if (!row) return '';
+        for (const key of keys) {
+            const value = clean(row[key]);
+            if (value) return value;
+        }
+        return '';
+    }
+
+    function materialId(material) {
+        return valueFrom(material, ['id', 'materialId', 'material_id']);
+    }
+
+    function materialCode(material) {
+        return valueFrom(material, ['itemCode', 'item_code', 'code', 'materialCode', 'material_code']);
+    }
+
+    function materialName(material) {
+        return valueFrom(material, ['itemName', 'item_name', 'name', 'materialName', 'material_name', 'description', 'itemDescription', 'item_description']);
+    }
+
+    function transactionMaterialId(transaction) {
+        return valueFrom(transaction, ['materialId', 'material_id']);
+    }
+
+    function transactionCode(transaction, visibleCode = '') {
+        return clean(visibleCode) || valueFrom(transaction, ['itemCode', 'item_code', 'code', 'materialCode', 'material_code']);
+    }
+
+    function transactionName(transaction, visibleName = '') {
+        return clean(visibleName) || valueFrom(transaction, ['itemName', 'item_name', 'name', 'materialName', 'material_name', 'description', 'itemDescription', 'item_description']);
+    }
+
+    function findMaterialForTransaction(transaction, visibleCode = '', visibleName = '') {
+        const txId = transactionMaterialId(transaction);
+        const txCode = normalizeText(transactionCode(transaction, visibleCode));
+        const txName = normalizeText(transactionName(transaction, visibleName));
+
+        return getMasterlist().find(material => {
+            const mId = materialId(material);
+            const mCode = normalizeText(materialCode(material));
+            const mName = normalizeText(materialName(material));
+
+            return (txId && mId && String(txId) === String(mId)) ||
+                   (txCode && mCode && txCode === mCode) ||
+                   (txName && mName && txName === mName);
+        }) || null;
+    }
+
+    window.materialsGetTransactionMaterial = function patchedMaterialsGetTransactionMaterial(transaction, visibleCode = '', visibleName = '') {
+        return findMaterialForTransaction(transaction, visibleCode, visibleName);
+    };
+
+    window.materialsGetTransactionDepartment = function patchedMaterialsGetTransactionDepartment(transaction, visibleCode = '', visibleName = '') {
+        const material = findMaterialForTransaction(transaction, visibleCode, visibleName);
+        return normalizeDepartment(
+            material?.department ||
+            material?.dept ||
+            material?.discipline ||
+            transaction?.department ||
+            transaction?.dept ||
+            transaction?.discipline ||
+            ''
+        );
+    };
+
+    window.materialsGetTransactionMaterialType = function patchedMaterialsGetTransactionMaterialType(transaction, visibleCode = '', visibleName = '') {
+        const material = findMaterialForTransaction(transaction, visibleCode, visibleName);
+        return normalizeType(
+            material?.type ||
+            material?.materialType ||
+            material?.material_type ||
+            material?.itemType ||
+            material?.item_type ||
+            transaction?.materialType ||
+            transaction?.material_type ||
+            transaction?.itemType ||
+            transaction?.item_type ||
+            ''
+        );
+    };
+
+    window.repairMaterialsTransactionFilterData = function repairMaterialsTransactionFilterData() {
+        const table = document.getElementById('materialsTransactionsTable');
+        if (!table) return;
+
+        const transactions = getTransactions();
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+
+        rows.forEach((row, index) => {
+            if (row.children.length < 14) return;
+
+            const tx = transactions[index] || {};
+            const visibleCode = clean(row.children[8]?.textContent || '');
+            const visibleName = clean(row.children[9]?.textContent || '');
+            const material = findMaterialForTransaction(tx, visibleCode, visibleName);
+
+            const department = normalizeDepartment(
+                material?.department || material?.dept || material?.discipline || tx.department || tx.dept || tx.discipline || ''
+            );
+
+            const materialType = normalizeType(
+                material?.type || material?.materialType || material?.material_type || material?.itemType || material?.item_type ||
+                tx.materialType || tx.material_type || tx.itemType || tx.item_type || row.children[13]?.textContent || ''
+            );
+
+            const itemCode = clean(visibleCode || tx.itemCode || tx.item_code || material?.itemCode || material?.item_code, '-');
+            const itemName = clean(visibleName || tx.itemName || tx.item_name || material?.itemName || material?.item_name, '-');
+
+            row.dataset.department = department;
+            row.dataset.type = materialType;
+            row.dataset.itemCode = itemCode;
+            row.dataset.itemName = itemName;
+
+            if (row.children[8]) row.children[8].textContent = itemCode;
+            if (row.children[9]) row.children[9].textContent = itemName;
+            if (row.children[13]) row.children[13].textContent = clean(materialType, '-');
+        });
+    };
+
+    window.filterMaterialsTransactionsTable = function patchedFilterMaterialsTransactionsTable() {
+        window.repairMaterialsTransactionFilterData?.();
+
+        const search = normalizeText(document.getElementById('materialsTransactionSearch')?.value || '');
+        const departmentFilter = normalizeDepartment(document.getElementById('materialsTransactionDepartmentFilter')?.value || '');
+        const typeFilter = normalizeType(document.getElementById('materialsTransactionTypeFilter')?.value || '');
+        const table = document.getElementById('materialsTransactionsTable');
+        if (!table) return;
+
+        table.querySelectorAll('tbody tr').forEach(row => {
+            const rowText = normalizeText(row.textContent + ' ' + (row.dataset.itemCode || '') + ' ' + (row.dataset.itemName || ''));
+            const rowDepartment = normalizeDepartment(row.dataset.department || '');
+            const rowType = normalizeType(row.dataset.type || '');
+
+            const matchesSearch = !search || rowText.includes(search);
+            const matchesDepartment = !departmentFilter || rowDepartment === departmentFilter;
+            const matchesType = !typeFilter || rowType === typeFilter;
+
+            row.style.display = matchesSearch && matchesDepartment && matchesType ? '' : 'none';
+        });
+    };
+
+    const previousRenderMaterialsView = window.renderMaterialsView;
+    if (typeof previousRenderMaterialsView === 'function') {
+        window.renderMaterialsView = function patchedRenderMaterialsViewV5() {
+            const result = previousRenderMaterialsView.apply(this, arguments);
+            setTimeout(() => {
+                window.repairMaterialsTransactionFilterData?.();
+                window.filterMaterialsTransactionsTable?.();
+            }, 30);
+            return result;
+        };
+    }
+
+    setTimeout(() => {
+        window.repairMaterialsTransactionFilterData?.();
+        window.filterMaterialsTransactionsTable?.();
+    }, 50);
+
+    console.log('Materials patch v5 installed: transaction department/type filters repaired.');
+})();
+</script>
+
+
+
+<script>
+    /* =========================================================
+       MATERIALS TRANSACTION TYPE FILTER FINAL FIX
+       - Type filter uses Masterlist type: Consumable / Non-Consumable
+       - Not transaction type: IN / OUT
+       - Works after switching tabs
+    ========================================================= */
+    (function installMaterialsTransactionTypeFilterFinalFix() {
+        if (window.__materialsTransactionTypeFilterFinalFixInstalled) return;
+        window.__materialsTransactionTypeFilterFinalFixInstalled = true;
+    
+        function clean(value, fallback = '') {
+            if (value === null || value === undefined) return fallback;
+            const text = String(value).trim();
+            if (!text || ['null', 'undefined', 'nan', '-'].includes(text.toLowerCase())) return fallback;
+            return text;
+        }
+    
+        function normalize(value) {
+            return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        }
+    
+        function normalizeMaterialType(value) {
+            const text = normalize(value);
+    
+            if (!text) return '';
+    
+            // IMPORTANT: check Non-Consumable first because it also contains "consumable"
+            if (
+                text.includes('non consumable') ||
+                text.includes('nonconsumable') ||
+                text.includes('non consume') ||
+                text.includes('nonconsume')
+            ) {
+                return 'Non-Consumable';
+            }
+    
+            if (
+                text.includes('consumable') ||
+                text.includes('consume')
+            ) {
+                return 'Consumable';
+            }
+    
+            return '';
+        }
+    
+        function getMaterialsMasterlist() {
+            return window.materialsMasterlist ||
+                (typeof materialsMasterlist !== 'undefined' ? materialsMasterlist : []) ||
+                [];
+        }
+    
+        function getMaterialsTransactions() {
+            return window.materialsTransactions ||
+                (typeof materialsTransactions !== 'undefined' ? materialsTransactions : []) ||
+                [];
+        }
+    
+        function getMaterialTypeFromMasterlist(transaction) {
+            const masterlist = getMaterialsMasterlist();
+    
+            const materialId = clean(
+                transaction.materialId ||
+                transaction.material_id ||
+                transaction.itemId ||
+                transaction.item_id
+            );
+    
+            const itemCode = clean(
+                transaction.itemCode ||
+                transaction.item_code ||
+                transaction.materialCode ||
+                transaction.material_code
+            );
+    
+            const itemName = clean(
+                transaction.itemName ||
+                transaction.item_name ||
+                transaction.materialName ||
+                transaction.material_name
+            );
+    
+            const material = masterlist.find(item => {
+                const masterId = clean(item.id || item.materialId || item.material_id);
+                const masterCode = clean(item.itemCode || item.item_code || item.materialCode || item.material_code);
+                const masterName = clean(item.itemName || item.item_name || item.materialName || item.material_name);
+    
+                return (
+                    (materialId && String(masterId) === String(materialId)) ||
+                    (itemCode && normalize(masterCode) === normalize(itemCode)) ||
+                    (itemName && normalize(masterName) === normalize(itemName))
+                );
+            });
+    
+            return normalizeMaterialType(
+                material?.type ||
+                material?.materialType ||
+                material?.material_type ||
+                material?.itemType ||
+                material?.item_type ||
+                transaction.materialType ||
+                transaction.material_type ||
+                transaction.itemType ||
+                transaction.item_type ||
+                transaction.type
+            );
+        }
+    
+        function repairTransactionRows() {
+            const table = document.getElementById('materialsTransactionsTable');
+            if (!table) return;
+    
+            const transactions = getMaterialsTransactions();
+    
+            table.querySelectorAll('tbody tr').forEach((row, index) => {
+                const transaction = transactions[index] || {};
+    
+                const materialType = getMaterialTypeFromMasterlist(transaction);
+    
+                row.dataset.type = materialType;
+    
+                // Adjust this index only if your Type column is in another position.
+                // Based on your previous code, Type cell is column index 13.
+                if (row.children[13]) {
+                    row.children[13].textContent = materialType || '-';
+                }
+            });
+        }
+    
+        window.repairMaterialsTransactionFilterData = repairTransactionRows;
+    
+        window.filterMaterialsTransactionsTable = function filterMaterialsTransactionsTableFinal() {
+            repairTransactionRows();
+    
+            const searchValue = normalize(document.getElementById('materialsTransactionSearch')?.value || '');
+            const typeFilter = normalizeMaterialType(document.getElementById('materialsTransactionTypeFilter')?.value || '');
+            const table = document.getElementById('materialsTransactionsTable');
+    
+            if (!table) return;
+    
+            table.querySelectorAll('tbody tr').forEach(row => {
+                const rowType = normalizeMaterialType(row.dataset.type || '');
+                const rowText = normalize(row.textContent || '');
+    
+                const matchesSearch = !searchValue || rowText.includes(searchValue);
+                const matchesType = !typeFilter || rowType === typeFilter;
+    
+                row.style.display = matchesSearch && matchesType ? '' : 'none';
+            });
+        };
+    
+        document.addEventListener('change', function(event) {
+            if (event.target?.id === 'materialsTransactionTypeFilter') {
+                window.filterMaterialsTransactionsTable();
+            }
+        }, true);
+    
+        document.addEventListener('input', function(event) {
+            if (event.target?.id === 'materialsTransactionSearch') {
+                window.filterMaterialsTransactionsTable();
+            }
+        }, true);
+    
+        const oldRenderMaterialsView = window.renderMaterialsView;
+        if (typeof oldRenderMaterialsView === 'function') {
+            window.renderMaterialsView = function patchedRenderMaterialsViewForTypeFilter() {
+                const result = oldRenderMaterialsView.apply(this, arguments);
+    
+                setTimeout(() => {
+                    repairTransactionRows();
+                    window.filterMaterialsTransactionsTable();
+                }, 50);
+    
+                return result;
+            };
+        }
+    
+        setTimeout(() => {
+            repairTransactionRows();
+            window.filterMaterialsTransactionsTable();
+        }, 100);
+    
+        console.log('Materials Transaction Type Filter Final Fix installed.');
+    })();
+    </script>
+
+
+<script>
+/* =========================================================
+   MATERIALS TRANSACTION FILTER - TYPE ONLY FINAL PATCH
+   - Removes Department filter from Transactions tab
+   - Keeps Type filter working for Consumable / Non-Consumable
+   - Runs after tab switching / Materials re-render
+========================================================= */
+(function installMaterialsTransactionTypeOnlyPatch() {
+    function clean(value, fallback = '') {
+        if (value === null || value === undefined) return fallback;
+        const text = String(value).trim();
+        if (!text || ['null', 'undefined', 'nan', '-'].includes(text.toLowerCase())) return fallback;
+        return text;
+    }
+
+    function key(value) {
+        return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    function normType(value) {
+        const text = key(value);
+        if (!text) return '';
+        if (text.includes('non consumable') || text.includes('nonconsumable') || text.includes('non consumables')) return 'Non-Consumable';
+        if (text.includes('consumable') || text.includes('consumables')) return 'Consumable';
+        return clean(value);
+    }
+
+    function getMasterlist() {
+        return window.materialsMasterlist || (typeof materialsMasterlist !== 'undefined' ? materialsMasterlist : []) || [];
+    }
+
+    function getTransactions() {
+        return window.materialsTransactions || (typeof materialsTransactions !== 'undefined' ? materialsTransactions : []) || [];
+    }
+
+    function getFirst(row, keys) {
+        if (!row) return '';
+        for (const k of keys) {
+            if (row[k] !== undefined && row[k] !== null && clean(row[k]) !== '') return row[k];
+        }
+        const wanted = keys.map(k => String(k).toLowerCase().replace(/[^a-z0-9]/g, ''));
+        for (const actualKey of Object.keys(row)) {
+            const normalizedKey = String(actualKey).toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (wanted.includes(normalizedKey) && clean(row[actualKey]) !== '') return row[actualKey];
+        }
+        return '';
+    }
+
+    function getMaterialId(material) {
+        return clean(getFirst(material, ['id', 'materialId', 'material_id']));
+    }
+
+    function getMaterialCode(material) {
+        return clean(getFirst(material, ['itemCode', 'item_code', 'code', 'Item Code']));
+    }
+
+    function getMaterialName(material) {
+        return clean(getFirst(material, ['itemName', 'item_name', 'name', 'Item Name']));
+    }
+
+    function getMaterialType(material) {
+        return normType(getFirst(material, ['type', 'materialType', 'material_type', 'itemType', 'item_type', 'Type']));
+    }
+
+    function getTransactionMaterialId(transaction) {
+        return clean(getFirst(transaction, ['materialId', 'material_id', 'itemId', 'item_id']));
+    }
+
+    function getTransactionIdFromRow(row) {
+        const btn = row.querySelector('button[onclick*="openNewTransactionModal"]');
+        const onclick = btn?.getAttribute('onclick') || '';
+        const match = onclick.match(/openNewTransactionModal\(['"]?([^'")]+)['"]?\)/);
+        return match ? String(match[1]) : '';
+    }
+
+    function findLinkedTransaction(row, index) {
+        const transactions = getTransactions();
+        const rowTxId = getTransactionIdFromRow(row);
+        if (rowTxId) {
+            const foundById = transactions.find(tx => String(tx.id) === rowTxId);
+            if (foundById) return foundById;
+        }
+        return transactions[index] || null;
+    }
+
+    function findLinkedMaterial(transaction, visibleCode, visibleName) {
+        const masterlist = getMasterlist();
+        const txMaterialId = getTransactionMaterialId(transaction);
+        const txCode = clean(getFirst(transaction, ['itemCode', 'item_code', 'Item Code']) || visibleCode).toLowerCase();
+        const txName = clean(getFirst(transaction, ['itemName', 'item_name', 'Item Name']) || visibleName).toLowerCase();
+
+        return masterlist.find(material => {
+            const materialId = getMaterialId(material);
+            const materialCode = getMaterialCode(material).toLowerCase();
+            const materialName = getMaterialName(material).toLowerCase();
+            return (
+                (txMaterialId && materialId && String(txMaterialId) === String(materialId)) ||
+                (txCode && materialCode && txCode === materialCode) ||
+                (txName && materialName && txName === materialName)
+            );
+        }) || null;
+    }
+
+    function removeDepartmentFilterControl() {
+        const dept = document.getElementById('materialsTransactionDepartmentFilter');
+        if (!dept) return;
+
+        const wrapper = dept.closest('.form-group') || dept.closest('label') || dept.parentElement;
+        if (wrapper) wrapper.remove();
+        else dept.remove();
+    }
+
+    function repairTransactionRowsForTypeOnly() {
+        const table = document.getElementById('materialsTransactionsTable');
+        if (!table) return;
+
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        rows.forEach((row, index) => {
+            const cells = row.querySelectorAll('td');
+            if (!cells.length) return;
+
+            const transaction = findLinkedTransaction(row, index);
+            const visibleCode = clean(cells[8]?.textContent || '');
+            const visibleName = clean(cells[9]?.textContent || '');
+            const linkedMaterial = findLinkedMaterial(transaction, visibleCode, visibleName);
+
+            const materialType = normType(
+                getMaterialType(linkedMaterial) ||
+                getFirst(transaction, ['materialType', 'material_type', 'itemType', 'item_type', 'type', 'Type']) ||
+                row.dataset.type ||
+                cells[13]?.textContent ||
+                ''
+            );
+
+            row.dataset.type = materialType;
+            row.dataset.search = key([row.textContent, materialType].join(' '));
+
+            if (cells[13] && materialType) cells[13].textContent = materialType;
+        });
+    }
+
+    window.filterMaterialsTransactionsTable = function () {
+    const normalize = (value) => String(value || '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/[\n\r]/g, ' ')
+        .replace(/[^a-z0-9]+/g, '')
+        .trim();
+
+    const searchValue = (document.getElementById('materialsTransactionSearch')?.value || '')
+        .toLowerCase()
+        .trim();
+
+    const selectedType = normalize(document.getElementById('materialsTransactionTypeFilter')?.value || '');
+
+    const table = document.getElementById('materialsTransactionsTable');
+    if (!table) return;
+
+    const headers = Array.from(table.querySelectorAll('thead th'))
+        .map(th => th.textContent.trim().toLowerCase());
+
+    const typeColumnIndex = headers.findIndex(h => h === 'type');
+
+    table.querySelectorAll('tbody tr').forEach(row => {
+        const rowText = row.textContent.toLowerCase();
+
+        const actualType = typeColumnIndex >= 0 && row.children[typeColumnIndex]
+            ? normalize(row.children[typeColumnIndex].textContent)
+            : '';
+
+        const matchesSearch = !searchValue || rowText.includes(searchValue);
+        const matchesType = !selectedType || actualType === selectedType;
+
+        row.style.display = matchesSearch && matchesType ? '' : 'none';
+    });
+};
+
+    document.addEventListener('change', function(event) {
+        if (event.target?.id === 'materialsTransactionTypeFilter') {
+            window.filterMaterialsTransactionsTable();
+        }
+    }, true);
+
+    document.addEventListener('input', function(event) {
+        if (event.target?.id === 'materialsTransactionSearch') {
+            window.filterMaterialsTransactionsTable();
+        }
+    }, true);
+
+    if (!window.__materialsTypeOnlyRenderWrapped && typeof window.renderMaterialsView === 'function') {
+        window.__materialsTypeOnlyRenderWrapped = true;
+        const originalRenderMaterialsView = window.renderMaterialsView;
+        window.renderMaterialsView = function patchedRenderMaterialsViewTypeOnly() {
+            const result = originalRenderMaterialsView.apply(this, arguments);
+            setTimeout(() => window.filterMaterialsTransactionsTable(), 50);
+            return result;
+        };
+    }
+
+    setTimeout(() => window.filterMaterialsTransactionsTable(), 100);
+    console.log('Materials transaction filter updated: Department filter removed, Type filter active.');
+})();
+</script>
+
 </body>
 </html>
