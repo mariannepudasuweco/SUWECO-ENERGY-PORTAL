@@ -10595,6 +10595,12 @@ if (
                         <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
                     </svg>
                 </button>
+                <button onclick="duplicateLocalRecord('${safeId}')" title="Duplicate row" style="width: 28px; height: 28px; border: 1px solid var(--border-color); background: var(--bg-surface); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--primary); cursor: pointer;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                </button>
                 <button onclick="deleteLocalRecord('${safeId}')" title="Delete" style="width: 28px; height: 28px; border: 1px solid var(--border-color); background: var(--bg-surface); border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: #ef4444; cursor: pointer;">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M3 6h18"></path>
@@ -10806,7 +10812,91 @@ if (
     if (nextBtn) nextBtn.disabled = localCurrentPage >= totalPages || localRowsPerPageValue === 'all';
 };
 
+        window.duplicateLocalRecord = function(id) {
+            const source = (window.localRecords || localRecords || [])
+                .find(record => String(record.id) === String(id));
+
+            if (!source) {
+                window.showToast?.('Local record not found.', 'error');
+                return;
+            }
+
+            if (!window.legacyGuardAdd('local')) return;
+
+            // Open a clean Add Local Record modal so saving creates a new row.
+            window.openLocalModal();
+            window.editingLocalId = null;
+            editingLocalId = null;
+
+            const valueOf = (...values) => {
+                for (const value of values) {
+                    if (value !== undefined && value !== null) return value;
+                }
+                return '';
+            };
+            const setValue = (elementId, value) => {
+                const element = document.getElementById(elementId);
+                if (element) element.value = value ?? '';
+            };
+
+            const requestId = valueOf(source.prsId, source.request_id, source.prs_id);
+            const isStandalone = Boolean(valueOf(source.isStandalone, source.is_standalone)) || !requestId;
+            const standaloneToggle = document.getElementById('localStandaloneToggle');
+
+            if (standaloneToggle) {
+                standaloneToggle.checked = isStandalone;
+                window.toggleLocalStandalone();
+            }
+
+            if (!isStandalone && requestId) {
+                setValue('localPrsSelect', requestId);
+                window.handleLocalPrsChange();
+            }
+
+            // Keep the source linkage and charging information.
+            setValue('localProcess', valueOf(source.process, source.transaction, 'LCL-LCL'));
+            setValue('localRepleCategory', valueOf(source.repleCategory, source.reple_category, source.category));
+            setValue('localRepleNo', valueOf(source.repleNo, source.reple_no));
+            setValue('localPrsNo', valueOf(source.prsNo, source.prs_no));
+            setValue('localItem', valueOf(source.item, source.item_particulars, source.description));
+            setValue('localChargingNoteCode', valueOf(source.chargingNoteCode, source.charging_note_code, source.charging_note));
+            setValue('localChargingCategory', valueOf(source.chargingCategory, source.charging_category));
+            setValue('localBoqCharging', valueOf(source.boqCharging, source.boq_charging));
+            setValue('localSubtaskCharging', valueOf(source.subtaskCharging, source.subtask_charging, source.subtask));
+            setValue('localWorkItemNo', valueOf(source.workItemNo, source.work_item_no, source.work_item));
+            setValue('localStartDate', valueOf(source.startDate, source.start_date, source.transaction_start_date));
+            setValue('localEndDate', valueOf(source.endDate, source.end_date, source.transaction_end_date));
+            setValue('localTargetDate', valueOf(source.targetDate, source.target_date));
+
+            // Keep the budget setup but clear transaction-specific/payment completion fields.
+            setValue('localTotalCost', valueOf(source.totalCost, source.total_cost, 0));
+            setValue('localVatType', valueOf(source.vatType, source.vat_type, 'Non-VAT'));
+            setValue('localPaymentTermsPercent', valueOf(source.paymentTermsPercent, source.terms_percent, 100));
+            setValue('localPaymentTerms', valueOf(source.paymentTerms, source.payment_terms));
+            setValue('localEwt', valueOf(source.ewt, 0));
+
+            setValue('localPoNo', '');
+            setValue('localSupplier', '');
+            setValue('localDateDelivered', '');
+            setValue('localDaysDelayed', 0);
+            setValue('localProcurementStatus', 'Pending');
+            setValue('localCurrentDept', '');
+            setValue('localPaymentNeededDate', '');
+            setValue('localPaymentReleased', '');
+            setValue('localMonth', '');
+            setValue('localPaymentStatus', 'Unpaid');
+            setValue('localConcerns', '');
+
+            window.calculateLocalBudget();
+
+            const submitButton = document.querySelector('#localForm button[type="submit"]');
+            if (submitButton) submitButton.textContent = 'Save Duplicate';
+        };
+
         window.openLocalModal = function(id = null) {
+            const localSubmitButton = document.querySelector('#localForm button[type="submit"]');
+            if (localSubmitButton) localSubmitButton.textContent = 'Save Record';
+
             const existingLocalForAccess = id ? (window.localRecords || localRecords || []).find(r => String(r.id) === String(id)) : null;
             if (id ? !window.legacyGuardEdit('local', existingLocalForAccess) : !window.legacyGuardAdd('local')) return;
             editingLocalId = id;
