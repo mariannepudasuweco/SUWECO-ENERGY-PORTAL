@@ -8503,42 +8503,61 @@ window.createLinkedProcurementRecordFromPrs = async function(prsData) {
     window.__procurementDashboardLoadedProjectId = null;
 };
 
-window.generatePaymentTermCheckboxes = function() {
+window.generatePaymentTermCheckboxes = function(savedSelections = []) {
+    const terms = document.getElementById('manilaPaymentTermsPercent')?.value || '';
+    const container = document.getElementById('manilaPaymentTermCheckboxes');
+    if (!container) return;
 
-const terms =
-    document.getElementById('manilaPaymentTermsPercent')?.value || '';
+    container.innerHTML = '';
 
-const container =
-    document.getElementById('manilaPaymentTermCheckboxes');
+    const percentages = terms
+        .split('/')
+        .map(value => Number.parseFloat(value))
+        .filter(value => Number.isFinite(value) && value > 0);
 
-if (!container) return;
+    percentages.forEach((percent, index) => {
+        const saved = savedSelections[index] || {};
+        const checked = Boolean(saved.checked);
+        const paidDate = saved.paid_date || saved.paidDate || '';
+        const div = document.createElement('div');
 
-container.innerHTML = '';
+        div.style.marginBottom = '8px';
+        div.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <label style="display:flex; align-items:center; gap:6px; min-width:70px; cursor:pointer;">
+                    <input
+                        type="checkbox"
+                        class="payment-term-checkbox"
+                        data-percent="${percent}"
+                        ${checked ? 'checked' : ''}
+                        onchange="
+                            const dateInput = this.closest('div').querySelector('.payment-term-paid-date');
+                            if (dateInput) {
+                                dateInput.disabled = !this.checked;
+                                if (this.checked && !dateInput.value) {
+                                    dateInput.value = new Date().toISOString().slice(0, 10);
+                                }
+                                if (!this.checked) dateInput.value = '';
+                            }
+                            calculateProgressPaymentActualAmount();
+                        ">
+                    <span>${percent}%</span>
+                </label>
+                <input
+                    type="date"
+                    class="payment-term-paid-date"
+                    value="${paidDate}"
+                    ${checked ? '' : 'disabled'}
+                    onchange="calculateProgressPaymentActualAmount()"
+                    style="padding:5px 8px; border:1px solid var(--border-color); border-radius:6px; font-size:0.8rem; background:var(--bg-body); color:var(--text-main);"
+                >
+            </div>
+        `;
 
-const percentages = terms
-    .split('/')
-    .map(x => parseFloat(x))
-    .filter(x => !isNaN(x));
+        container.appendChild(div);
+    });
 
-percentages.forEach(percent => {
-
-    const div = document.createElement('div');
-
-    div.innerHTML = `
-        <label>
-            <input
-                type="checkbox"
-                class="payment-term-checkbox"
-                data-percent="${percent}"
-                onchange="calculateProgressPaymentActualAmount()">
-            ${percent}%
-        </label>
-    `;
-
-    container.appendChild(div);
-});
-
-calculateProgressPaymentActualAmount();
+    calculateProgressPaymentActualAmount();
 };
 
 window.calculateProgressPaymentActualAmount = function() {
@@ -8565,21 +8584,21 @@ document.getElementById('manilaActualAmount').value =
 
 
 window.parseManilaPaymentTermSelections = function(value, fallbackTerms = '') {
+    const normalize = item => ({
+        percent: Number(item?.percent || 0),
+        checked: Boolean(item?.checked),
+        paid_date: item?.paid_date || item?.paidDate || ''
+    });
+
     if (Array.isArray(value)) {
-        return value.map(item => ({
-            percent: Number(item?.percent || 0),
-            checked: Boolean(item?.checked)
-        })).filter(item => item.percent > 0);
+        return value.map(normalize).filter(item => item.percent > 0);
     }
 
     if (typeof value === 'string' && value.trim()) {
         try {
             const parsed = JSON.parse(value);
             if (Array.isArray(parsed)) {
-                return parsed.map(item => ({
-                    percent: Number(item?.percent || 0),
-                    checked: Boolean(item?.checked)
-                })).filter(item => item.percent > 0);
+                return parsed.map(normalize).filter(item => item.percent > 0);
             }
         } catch (error) {
             console.warn('Unable to parse payment term selections:', error);
@@ -8590,83 +8609,160 @@ window.parseManilaPaymentTermSelections = function(value, fallbackTerms = '') {
         .split('/')
         .map(value => Number.parseFloat(value))
         .filter(value => Number.isFinite(value) && value > 0)
-        .map(percent => ({ percent, checked: false }));
+        .map(percent => ({ percent, checked: false, paid_date: '' }));
 };
 
-window.updateManilaPaymentTermFromRow = async function(recordId, selectionIndex, checked) {
-    const records = window.manilaRecords || manilaRecords || [];
-    const record = records.find(item => String(item.id) === String(recordId));
+window.getLatestManilaPaidDate = function(selections = []) {
+    return selections
+        .filter(term => term.checked && term.paid_date)
+        .map(term => term.paid_date)
+        .sort()
+        .at(-1) || null;
+};
 
+window.formatManilaPaymentMonth = function(isoDate) {
+    if (!isoDate) return '';
+    const date = new Date(`${isoDate}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', '-');
+};
+
+window.updateManilaPaymentTermFromRow = async function(
+    recordId,
+    selectionIndex,
+    checked
+) {
+    const allRecords = Array.isArray(window.manilaRecords) && window.manilaRecords.length
+        ? window.manilaRecords
+        : (manilaRecords || []);
+
+    const record = allRecords.find(item => String(item.id) === String(recordId));
     if (!record) {
         window.showToast?.('Manila record not found.', 'error');
         return;
     }
-
     if (!window.legacyGuardEdit('manila', record)) {
         window.renderManilaTable?.();
         return;
     }
 
     const selections = window.parseManilaPaymentTermSelections(
-        record.paymentTermSelections,
-        record.paymentTermsPercent || record.termsPercent || ''
+        record.paymentTermSelections ?? record.payment_term_selections,
+        record.paymentTermsPercent ?? record.termsPercent ?? record.terms_percent ?? ''
     );
-
     if (!selections[selectionIndex]) return;
 
-    selections[selectionIndex].checked = Boolean(checked);
+    selections[selectionIndex] = {
+        ...selections[selectionIndex],
+        checked: Boolean(checked),
+        paid_date: checked
+            ? (selections[selectionIndex].paid_date || new Date().toISOString().slice(0, 10))
+            : ''
+    };
 
+    return window.saveManilaRowPaymentTerms(record, selections);
+};
+
+window.updateManilaPaymentTermDateFromRow = async function(recordId, selectionIndex, paidDate) {
+    const allRecords = Array.isArray(window.manilaRecords) && window.manilaRecords.length
+        ? window.manilaRecords
+        : (manilaRecords || []);
+    const record = allRecords.find(item => String(item.id) === String(recordId));
+    if (!record) return;
+    if (!window.legacyGuardEdit('manila', record)) {
+        window.renderManilaTable?.();
+        return;
+    }
+
+    const selections = window.parseManilaPaymentTermSelections(
+        record.paymentTermSelections ?? record.payment_term_selections,
+        record.paymentTermsPercent ?? record.termsPercent ?? record.terms_percent ?? ''
+    );
+    if (!selections[selectionIndex]) return;
+
+    selections[selectionIndex] = {
+        ...selections[selectionIndex],
+        paid_date: paidDate || ''
+    };
+
+    return window.saveManilaRowPaymentTerms(record, selections);
+};
+
+window.saveManilaRowPaymentTerms = async function(record, selections) {
+    const recordId = record.id;
     const paidPercent = selections.reduce(
-        (total, item) => total + (item.checked ? Number(item.percent || 0) : 0),
+        (sum, term) => sum + (term.checked ? Number(term.percent || 0) : 0),
         0
     );
     const totalTermsPercent = selections.reduce(
-        (total, item) => total + Number(item.percent || 0),
+        (sum, term) => sum + Number(term.percent || 0),
         0
     );
-    const actualAmount = Number(record.totalCost || 0) * (paidPercent / 100);
+    const totalCost = Number(record.totalCost ?? record.total_cost ?? 0);
+    const actualAmount = Number((totalCost * (paidPercent / 100)).toFixed(2));
     const paymentStatus = totalTermsPercent > 0 && paidPercent >= totalTermsPercent
         ? 'Paid'
         : 'Unpaid';
-
-    record.paymentTermSelections = selections;
-    record.actualAmount = actualAmount;
-    record.actual_amount = actualAmount;
-    record.paymentStatus = paymentStatus;
-    record.payment_status = paymentStatus;
-
-    window.renderManilaTable?.();
+    const latestPaidDate = window.getLatestManilaPaidDate(selections);
+    const paymentMonth = window.formatManilaPaymentMonth(latestPaidDate);
 
     if (!window.supabase) {
         window.showToast?.('Supabase is not connected.', 'error');
+        window.renderManilaTable?.();
         return;
     }
 
     const { error } = await window.supabase
         .from('manila_procurement')
         .update({
-            payment_term_selections: JSON.stringify(selections),
+            payment_term_selections: selections,
             actual_amount: actualAmount,
             payment_status: paymentStatus,
+            payment_released: latestPaidDate,
+            payment_month: paymentMonth,
             updated_at: new Date().toISOString()
         })
         .eq('id', String(recordId));
 
     if (error) {
         console.error('ROW PAYMENT TERM UPDATE ERROR:', error);
-        window.showToast?.(
-            error.message?.includes('payment_term_selections')
-                ? 'Add the payment_term_selections column in Supabase first.'
-                : `Failed to update payment term: ${error.message || 'Unknown error'}`,
-            'error'
-        );
+        window.showToast?.(`Failed to update payment: ${error.message || 'Unknown error'}`, 'error');
         await window.loadManilaProcurementFromSupabase?.();
         window.renderManilaTable?.();
         return;
     }
 
-    window.showToast?.(`${paidPercent}% marked as paid.`, 'success');
-    window.dispatchEvent(new CustomEvent('manilaUpdated'));
+    const applyUpdatedValues = item => String(item.id) === String(recordId)
+        ? {
+            ...item,
+            paymentTermSelections: selections,
+            payment_term_selections: selections,
+            actualAmount,
+            actual_amount: actualAmount,
+            paymentStatus,
+            payment_status: paymentStatus,
+            paymentReleased: latestPaidDate || '',
+            payment_released: latestPaidDate || '',
+            paymentMonth,
+            month: paymentMonth
+        }
+        : item;
+
+    manilaRecords = (manilaRecords || []).map(applyUpdatedValues);
+    window.manilaRecords = (window.manilaRecords || manilaRecords).map(applyUpdatedValues);
+    window.renderManilaTable?.();
+
+    window.dispatchEvent(new CustomEvent('manilaUpdated', {
+        detail: { id: recordId, paidPercent, actualAmount, paymentStatus, latestPaidDate }
+    }));
+
+    window.showToast?.(
+        `${paidPercent}% paid — Actual Amount: ₱${actualAmount.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        })}`,
+        'success'
+    );
 };
 
 window.loadManilaProcurementFromSupabase = async function() {
@@ -8705,6 +8801,8 @@ window.loadManilaProcurementFromSupabase = async function() {
         id: row.id,
         projectId: row.project_id,
         prsId: row.request_id,
+        requestId: row.request_id,
+        request_id: row.request_id,
         process: row.process || '',
         designation: row.designation || '',
         prsNo: row.prs_no || '',
@@ -8728,7 +8826,7 @@ window.loadManilaProcurementFromSupabase = async function() {
         paymentTermsPercent: row.terms_percent ?? 100,
         paymentTermSelections: window.parseManilaPaymentTermSelections(
             row.payment_term_selections,
-            row.terms_percent || ''
+            row.terms_percent ?? ''
         ),
         netOfVat: Number(row.net_of_vat || 0),
         paymentTerms: row.payment_terms || '',
@@ -9364,13 +9462,15 @@ if (manilaForm && manilaForm.dataset.saveBound !== 'true') {
                 total_cost: Number(document.getElementById('manilaTotalCost')?.value || 0),
                 vat_type: document.getElementById('manilaVatType')?.value || 'Non-VAT',
                 vat_amount: Number(document.getElementById('manilaVatAmount')?.value || 0),
-                terms_percent: Number(document.getElementById('manilaPaymentTermsPercent')?.value || 100),
-                payment_term_selections: JSON.stringify(
-                    [...document.querySelectorAll('.payment-term-checkbox')].map(cb => ({
-                        percent: Number(cb.dataset.percent || 0),
-                        checked: Boolean(cb.checked)
-                    }))
-                ),
+                // Keep the numeric database column valid while preserving the
+                // 70/30 (or other) breakdown in payment_term_selections.
+                terms_percent: [...document.querySelectorAll('.payment-term-checkbox')]
+                    .reduce((sum, cb) => sum + Number(cb.dataset.percent || 0), 0) || 100,
+                payment_term_selections: [...document.querySelectorAll('.payment-term-checkbox')].map((cb, index) => ({
+                    percent: Number(cb.dataset.percent || 0),
+                    checked: Boolean(cb.checked),
+                    paid_date: document.querySelectorAll('.payment-term-paid-date')[index]?.value || ''
+                })),
                 net_of_vat: Number(document.getElementById('manilaNetOfVat')?.value || 0),
                 payment_terms: document.getElementById('manilaPaymentTerms')?.value || '',
                 ewt: Number(document.getElementById('manilaEwt')?.value || 0),
@@ -9890,22 +9990,32 @@ records.sort((a, b) => {
 
                         if (!selections.length) return '-';
 
-                        return `<div style="display: flex; flex-direction: column; gap: 6px;">${selections.map((term, index) => `
-                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap;">
+                        return `<div style="display:flex; flex-direction:column; gap:8px; min-width:185px;">${selections.map((term, index) => `
+                            <div style="display:flex; align-items:center; gap:6px; white-space:nowrap;">
+                                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; min-width:55px;">
+                                    <input
+                                        type="checkbox"
+                                        ${term.checked ? 'checked' : ''}
+                                        onchange="updateManilaPaymentTermFromRow('${m.id}', ${index}, this.checked)"
+                                    >
+                                    <span>${Number(term.percent || 0)}%</span>
+                                </label>
                                 <input
-                                    type="checkbox"
-                                    ${term.checked ? 'checked' : ''}
-                                    onchange="updateManilaPaymentTermFromRow('${m.id}', ${index}, this.checked)"
+                                    type="date"
+                                    value="${term.paid_date || ''}"
+                                    ${term.checked ? '' : 'disabled'}
+                                    onchange="updateManilaPaymentTermDateFromRow('${m.id}', ${index}, this.value)"
+                                    style="width:122px; padding:3px 5px; border:1px solid var(--border-color); border-radius:5px; font-size:0.72rem; background:var(--bg-body); color:var(--text-main);"
+                                    title="Paid date for ${Number(term.percent || 0)}%"
                                 >
-                                <span>${Number(term.percent || 0)}%</span>
-                            </label>
+                            </div>
                         `).join('')}</div>`;
                     })()}
                 </td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">₱${Number(m.netOfVat || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.paymentTerms || '-'}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${Number(m.ewt || 0) === 0 ? 'No EWT' : (Number(m.ewt) * 100) + '%'}</td>
-                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600; color: var(--success);">₱${Number(m.actualAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+                <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); font-weight: 600; color: var(--success);">₱${Number(m.actualAmount ?? m.actual_amount ?? 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.paymentNeededDate || m.neededDate || '-'}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.checkInventory || '-'}</td>
                 <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.paymentReleased || '-'}</td>
@@ -10041,10 +10151,24 @@ records.sort((a, b) => {
 
             if (id) {
                 const currentRecord = manilaRecords.find(m => String(m.id) === String(id));
-                if (currentRecord && String(currentRecord.prsId) === String(p.id)) return true;
+                const currentLinkedPrsId =
+                    currentRecord?.prsId ||
+                    currentRecord?.requestId ||
+                    currentRecord?.request_id ||
+                    '';
+
+                if (currentRecord && String(currentLinkedPrsId) === String(p.id)) return true;
             }
 
-            return !manilaRecords.some(m => String(m.prsId) === String(p.id));
+            return !manilaRecords.some(m => {
+                const linkedPrsId =
+                    m?.prsId ||
+                    m?.requestId ||
+                    m?.request_id ||
+                    '';
+
+                return String(linkedPrsId) === String(p.id);
+            });
         });
 
         eligiblePrs.forEach(p => {
@@ -10069,8 +10193,53 @@ records.sort((a, b) => {
         const record = manilaRecords.find(r => String(r.id) === String(id));
 
         if (record) {
-            document.getElementById('manilaPrsSelect').value = record.prsId || '';
+            const linkedPrsId =
+                record.prsId ||
+                record.requestId ||
+                record.request_id ||
+                '';
+
+            const prsSelectElement = document.getElementById('manilaPrsSelect');
+
+            // Ensure the linked PRS remains selectable while editing, even when
+            // another row already references it or the option list was filtered.
+            if (prsSelectElement && linkedPrsId) {
+                const optionExists = Array.from(prsSelectElement.options)
+                    .some(option => String(option.value) === String(linkedPrsId));
+
+                if (!optionExists) {
+                    const linkedPrs = (prsRecords || []).find(
+                        p => String(p.id) === String(linkedPrsId)
+                    );
+
+                    if (linkedPrs) {
+                        const option = document.createElement('option');
+                        option.value = linkedPrs.id;
+                        option.textContent = `${linkedPrs.prsNo || record.prsNo || 'No PRS No'} - ${(linkedPrs.description || record.item || 'No description').substring(0, 30)}`;
+                        prsSelectElement.appendChild(option);
+                    }
+                }
+
+                prsSelectElement.value = String(linkedPrsId);
+            }
+
             handleManilaPrsChange();
+
+            // Fallback for imported Manila rows whose PRS record is not currently
+            // available in the dropdown. Keep the saved linkage details visible.
+            if (!linkedPrsId || !prsSelectElement?.value) {
+                const setValue = (elementId, value) => {
+                    const element = document.getElementById(elementId);
+                    if (element) element.value = value ?? '';
+                };
+
+                setValue('manilaProcess', record.process);
+                setValue('manilaDesignation', record.designation);
+                setValue('manilaPrsNo', record.prsNo);
+                setValue('manilaPrsDate', record.prsDate);
+                setValue('manilaItem', record.item);
+                setValue('manilaTargetDate', record.targetDate);
+            }
 
             document.getElementById('manilaSubtaskCharging').value = record.subtaskCharging || record.subtask_charging || '-';
             document.getElementById('manilaWorkItemNo').value = record.workItemNo || '';
@@ -10082,14 +10251,23 @@ records.sort((a, b) => {
             document.getElementById('manilaCurrentDept').value = record.currentDepartment || '';
             document.getElementById('manilaTotalCost').value = record.totalCost || 0;
             document.getElementById('manilaVatType').value = record.vatType || 'Non-VAT';
+            const savedPaymentSelections = window.parseManilaPaymentTermSelections(
+                record.paymentTermSelections,
+                record.paymentTermsPercent || record.termsPercent || '100'
+            );
+
+            // Restore the actual tranche breakdown (for example 70/30),
+            // instead of showing the summed terms_percent value of 100.
             document.getElementById('manilaPaymentTermsPercent').value =
-    record.paymentTermsPercent || record.termsPercent || 100;
+                savedPaymentSelections.length
+                    ? savedPaymentSelections.map(item => Number(item.percent || 0)).join('/')
+                    : String(record.paymentTermsPercent || record.termsPercent || 100);
 
-generatePaymentTermCheckboxes();
+            generatePaymentTermCheckboxes(savedPaymentSelections);
+            calculateProgressPaymentActualAmount();
 
-document.getElementById('manilaPaymentTerms').value =
-    record.paymentTerms || '';
-            generatePaymentTermCheckboxes();
+            document.getElementById('manilaPaymentTerms').value =
+                record.paymentTerms || '';
             document.getElementById('manilaEwt').value = record.ewt || 0;
             document.getElementById('manilaPaymentNeededDate').value = record.paymentNeededDate || record.neededDate || '';
             document.getElementById('manilaCheckInventory').value = record.checkInventory || '';
@@ -10104,6 +10282,7 @@ document.getElementById('manilaPaymentTerms').value =
         if (form) form.reset();
 
         document.getElementById('manilaPaymentTermsPercent').value = 100;
+        generatePaymentTermCheckboxes([]);
         handleManilaPrsChange();
     }
 };
