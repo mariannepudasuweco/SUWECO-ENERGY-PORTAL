@@ -1,12 +1,21 @@
 import {
+  buildChecklistHierarchy,
   getActualRequirementCount,
+  getChecklistItemsForPhase,
   getChecklistItemsForSequenceNode,
+  getChecklistItemName,
+  getChecklistStatusCounts,
   getCompletedChecklistCount,
+  getPhaseStatusCounts,
+  getSequenceNodeStatusCounts,
+  mergeChecklistSourceRows,
+  normalizeChecklistStatus,
   type WbsChecklistLikeItem,
 } from '../utils/wbsAlignment';
+import { originalItems } from '../data/wbsChecklistData';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ZoomIn, ZoomOut, Download, Save, MousePointer2, Trash2, Loader2, ClipboardList, Users, Clock, Calendar, Flag, ArrowRight } from 'lucide-react';
+import { ZoomIn, ZoomOut, Download, Save, MousePointer2, Trash2, Loader2, ClipboardList, Users, Clock, Calendar, Flag, ArrowRight, CheckCircle2 } from 'lucide-react';
 import * as htmlToImage from 'html-to-image';
 import { jsPDF } from 'jspdf';
 import { useWbsData } from '../hooks/useWbsData';
@@ -45,15 +54,34 @@ type PhaseDuration = {
   actualUnit: string;
 };
 
+const STATUS_LEGEND_COLORS = {
+  ongoing: '#64799B',
+  completed: '#4C9A74',
+  delayed: '#C86969',
+  notApplicable: '#94a3b8',
+  notYetStarted: '#64748b',
+};
+
+const getStatusLegendColor = (status?: string) => {
+  const normalized = String(status || '').toUpperCase();
+
+  if (normalized === 'COMPLETED') return STATUS_LEGEND_COLORS.completed;
+  if (normalized === 'DELAYED') return STATUS_LEGEND_COLORS.delayed;
+  if (normalized === 'NOT APPLICABLE') return STATUS_LEGEND_COLORS.notApplicable;
+  if (normalized === 'ONGOING') return STATUS_LEGEND_COLORS.ongoing;
+
+  return STATUS_LEGEND_COLORS.notYetStarted;
+};
+
 const getPhaseStatusColor = (nodes: NodeData[]) => {
-  if (!nodes || nodes.length === 0) return '#64748b';
+  if (!nodes || nodes.length === 0) return STATUS_LEGEND_COLORS.notYetStarted;
   const allCompleted = nodes.every(n => n.stat === 'COMPLETED');
-  if (allCompleted) return '#4C9A74';
+  if (allCompleted) return STATUS_LEGEND_COLORS.completed;
   const anyDelayed = nodes.some(n => n.stat === 'DELAYED');
-  if (anyDelayed) return '#C86969';
+  if (anyDelayed) return STATUS_LEGEND_COLORS.delayed;
   const anyOngoing = nodes.some(n => n.stat === 'ONGOING');
-  if (anyOngoing) return '#4A7CA8';
-  return '#64748b'; // Not Started default
+  if (anyOngoing) return STATUS_LEGEND_COLORS.ongoing;
+  return STATUS_LEGEND_COLORS.notYetStarted;
 };
 
 const getPhaseStatusText = (nodes: NodeData[]) => {
@@ -258,65 +286,45 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
   }, [globalWbsData]);
 
   useEffect(() => {
-  const normalizeText = (value: any) =>
-    String(value || "")
-      .toLowerCase()
-      .replace(/pre-dev/g, "pre development")
-      .replace(/pre-development/g, "pre development")
-      .replace(/post-dev/g, "post development")
-      .replace(/post-development/g, "post development")
-      .replace(/[^a-z0-9]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
+  const getSequenceStatus = (rows: WbsChecklistLikeItem[]) => {
+    const counts = getChecklistStatusCounts(rows);
 
-  const normalizeChecklistStatus = (row: any) => {
-    const rawStatus = String(row?.status || "").trim().toLowerCase();
-
-    if (
-      row?.checked === true ||
-      rawStatus.includes("completed") ||
-      rawStatus.includes("done")
-    ) {
-      return "COMPLETED";
-    }
-
-    if (rawStatus.includes("ongoing") || rawStatus.includes("progress")) {
+    if (counts.total === 0) return null;
+    if (counts.completed === counts.total) return "COMPLETED";
+    if (counts.delayed > 0) return "DELAYED";
+    if (counts.inProgress > 0 || counts.pending > 0 || counts.completed > 0) {
       return "ONGOING";
     }
-
-    if (rawStatus.includes("delay") || rawStatus.includes("overdue")) {
-      return "DELAYED";
-    }
-
-    if (rawStatus.includes("not applicable") || rawStatus.includes("n/a")) {
-      return "NOT APPLICABLE";
-    }
-
     return "NOT YET STARTED";
   };
 
-  const getGroupStatus = (rows: any[]) => {
-    if (!rows.length) return null;
+  const getDateRange = (matchedRows: WbsChecklistLikeItem[]) => {
+    const starts = matchedRows
+      .map((row) => row.date_started)
+      .filter(Boolean)
+      .map((date) => new Date(date))
+      .filter((date) => !Number.isNaN(date.getTime()));
 
-    const statuses = rows.map(normalizeChecklistStatus);
+    const ends = matchedRows
+      .map((row) => row.due_date)
+      .filter(Boolean)
+      .map((date) => new Date(date))
+      .filter((date) => !Number.isNaN(date.getTime()));
 
-    if (statuses.every((status) => status === "COMPLETED")) {
-      return "COMPLETED";
-    }
+    const minStart =
+      starts.length > 0
+        ? new Date(Math.min(...starts.map((date) => date.getTime())))
+        : null;
 
-    if (statuses.some((status) => status === "DELAYED")) {
-      return "DELAYED";
-    }
+    const maxEnd =
+      ends.length > 0
+        ? new Date(Math.max(...ends.map((date) => date.getTime())))
+        : null;
 
-    if (statuses.some((status) => status === "ONGOING")) {
-      return "ONGOING";
-    }
-
-    if (statuses.some((status) => status === "COMPLETED")) {
-      return "ONGOING";
-    }
-
-    return "NOT YET STARTED";
+    return {
+      start: minStart ? minStart.toISOString().split("T")[0] : "-",
+      end: maxEnd ? maxEnd.toISOString().split("T")[0] : "-",
+    };
   };
 
   const syncFromChecklist = async () => {
@@ -324,130 +332,55 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     const projectId =
       (window as any).currentProjectId || (window as any).selectedProjectId;
 
-    if (!supabase || !projectId) {
-      console.warn("[WBS Sequence] Missing project or Supabase.");
-      return;
+    let savedRows: WbsChecklistLikeItem[] = [];
+
+    if (supabase && projectId) {
+      const { data, error } = await supabase
+        .from("wbs_checklist_items")
+        .select("*")
+        .eq("project_id", String(projectId));
+
+      if (error) {
+        console.error("[WBS Sequence] Failed to sync checklist:", error);
+      } else {
+        savedRows = data || [];
+      }
+    } else {
+      console.warn(
+        "[WBS Sequence] Supabase/project was not ready; using built-in WBS Checklist data as source of truth."
+      );
     }
 
-    const { data, error } = await supabase
-      .from("wbs_checklist_items")
-      .select("*")
-      .eq("project_id", String(projectId));
+    const checklistSource = mergeChecklistSourceRows(
+      originalItems as WbsChecklistLikeItem[],
+      savedRows
+    );
 
-    if (error) {
-      console.error("[WBS Sequence] Failed to sync checklist:", error);
-      return;
-    }
-
-    const rows = data || [];
-
-    setChecklistItems(rows as WbsChecklistLikeItem[]);
-
-    console.log("[WBS Sequence] Checklist rows loaded:", rows.length, rows);
-
-    const findDirectMatch = (node: NodeData) => {
-      const nodeTitle = normalizeText(node.title);
-      const nodeId = normalizeText(node.id);
-
-      return rows.find((row: any) => {
-        const rowItem = normalizeText(row.item);
-        const rowCode = normalizeText(row.task_code || row.item_no);
-        const rowOriginalId = normalizeText(row.original_item_id);
-        const rowSection = normalizeText(row.section);
-        const rowSubsection = normalizeText(row.subsection);
-
-        return (
-          rowItem === nodeTitle ||
-          rowItem.includes(nodeTitle) ||
-          nodeTitle.includes(rowItem) ||
-          rowCode === nodeId ||
-          rowOriginalId === nodeId ||
-          rowSection === nodeTitle ||
-          rowSubsection === nodeTitle ||
-          rowSection.includes(nodeTitle) ||
-          rowSubsection.includes(nodeTitle)
-        );
-      });
-    };
-
-    const getRowsByPhase = (phaseName: string) => {
-      const phase = normalizeText(phaseName);
-
-      return rows.filter((row: any) => {
-        const requirement = normalizeText(row.requirement);
-        const section = normalizeText(row.section);
-        const subsection = normalizeText(row.subsection);
-
-        return (
-          requirement === phase ||
-          requirement.includes(phase) ||
-          phase.includes(requirement) ||
-          section === phase ||
-          subsection === phase
-        );
-      });
-    };
-
-    const getDateRange = (matchedRows: any[]) => {
-      const starts = matchedRows
-        .map((row) => row.date_started)
-        .filter(Boolean)
-        .map((date) => new Date(date))
-        .filter((date) => !Number.isNaN(date.getTime()));
-
-      const ends = matchedRows
-        .map((row) => row.due_date)
-        .filter(Boolean)
-        .map((date) => new Date(date))
-        .filter((date) => !Number.isNaN(date.getTime()));
-
-      const minStart =
-        starts.length > 0
-          ? new Date(Math.min(...starts.map((date) => date.getTime())))
-          : null;
-
-      const maxEnd =
-        ends.length > 0
-          ? new Date(Math.max(...ends.map((date) => date.getTime())))
-          : null;
-
-      return {
-        start: minStart ? minStart.toISOString().split("T")[0] : "-",
-        end: maxEnd ? maxEnd.toISOString().split("T")[0] : "-",
-      };
-    };
+    setChecklistItems(checklistSource);
 
     const updateList = (list: NodeData[], phaseName: string) => {
-      const phaseRows = getRowsByPhase(phaseName);
-      const phaseStatus = getGroupStatus(phaseRows);
+      const phaseRows = getChecklistItemsForPhase(phaseName, checklistSource);
+      const phaseStatus = getSequenceStatus(phaseRows);
       const phaseDates = getDateRange(phaseRows);
 
       return (list || []).map((node) => {
-        const directMatch = findDirectMatch(node);
+        const matchedRows = getChecklistItemsForSequenceNode(
+          node.title,
+          checklistSource
+        );
+        const nodeStatus = getSequenceStatus(matchedRows);
+        const nodeDates = getDateRange(matchedRows);
+        const nextStatus = nodeStatus || phaseStatus || node.stat;
+        const nextDates = matchedRows.length > 0 ? nodeDates : phaseDates;
 
-        if (directMatch) {
-          return {
-            ...node,
-            stat: normalizeChecklistStatus(directMatch),
-            t1: directMatch.date_started || node.t1 || "-",
-            t2: directMatch.due_date || node.t2 || "-",
-            s1: directMatch.date_started || node.s1 || "-",
-            s2: directMatch.due_date || node.s2 || "-",
-          };
-        }
-
-        if (phaseStatus) {
-          return {
-            ...node,
-            stat: phaseStatus,
-            t1: phaseDates.start !== "-" ? phaseDates.start : node.t1,
-            t2: phaseDates.end !== "-" ? phaseDates.end : node.t2,
-            s1: phaseDates.start !== "-" ? phaseDates.start : node.s1,
-            s2: phaseDates.end !== "-" ? phaseDates.end : node.s2,
-          };
-        }
-
-        return node;
+        return {
+          ...node,
+          stat: nextStatus,
+          t1: nextDates.start !== "-" ? nextDates.start : node.t1,
+          t2: nextDates.end !== "-" ? nextDates.end : node.t2,
+          s1: nextDates.start !== "-" ? nextDates.start : node.s1,
+          s2: nextDates.end !== "-" ? nextDates.end : node.s2,
+        };
       });
     };
 
@@ -473,9 +406,7 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     setLocalPostDevPhase((prev) =>
       updateList(prev, "POST-DEVELOPMENT PHASE")
     );
-    setLocalOffsets4((prev) =>
-      updateList(prev, "POST-DEVELOPMENT PHASE")
-    );
+    setLocalOffsets4((prev) => updateList(prev, "OTHERS"));
   };
 
   syncFromChecklist();
@@ -556,7 +487,7 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
       const pdf = new jsPDF({
         orientation: 'landscape',
         unit: 'mm',
-        format: 'a2' // A2 is large enough for most sequences without being overwhelming
+        format: 'a3' // A3 landscape export for printing
       });
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
@@ -573,20 +504,24 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
 
       const imgWidth = img.width;
       const imgHeight = img.height;
-      const ratio = Math.min((pdfWidth - 20) / imgWidth, (pdfHeight - 20) / imgHeight);
+      const pageMargin = 4;
+      const footerSpace = 8;
+      const availableWidth = pdfWidth - pageMargin * 2;
+      const availableHeight = pdfHeight - pageMargin * 2 - footerSpace;
+      const ratio = Math.min(availableWidth / imgWidth, availableHeight / imgHeight);
       
       const finalWidth = imgWidth * ratio;
       const finalHeight = imgHeight * ratio;
       
       const x = (pdfWidth - finalWidth) / 2;
-      const y = (pdfHeight - finalHeight) / 2;
+      const y = pageMargin;
 
       pdf.addImage(dataUrl, 'PNG', x, y, finalWidth, finalHeight);
       
-      // Footer
-      pdf.setFontSize(10);
+      // Footer kept outside the captured map so the A3 page area is maximized.
+      pdf.setFontSize(8);
       pdf.setTextColor(150);
-      pdf.text(`WBS Sequence - Exported ${new Date().toLocaleDateString()}`, 10, pdfHeight - 10);
+      pdf.text(`WBS Sequence - Exported ${new Date().toLocaleDateString()}`, pageMargin, pdfHeight - 3);
       
       pdf.save(`WBS-Sequence-${Date.now()}.pdf`);
       console.log('PDF Export complete');
@@ -714,13 +649,13 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
   };
 
   const phasesSummary = [
-    { name: 'COMPETITIVE SELECTION PROCESS', data: localNodesData['COMPETITIVE SELECTION PROCESS'] },
-    { name: 'PRE-DEVELOPMENT PHASE 1', data: localNodesData['PRE-DEVELOPMENT PHASE 1'] },
-    { name: 'PRE-DEVELOPMENT PHASE 2', data: localNodesData['PRE-DEVELOPMENT PHASE 2'] },
+    { name: 'COMPETITIVE SELECTION PROCESS', data: localNodesData['COMPETITIVE SELECTION PROCESS'] || [] },
+    { name: 'PRE-DEVELOPMENT PHASE 1', data: localNodesData['PRE-DEVELOPMENT PHASE 1'] || [] },
+    { name: 'PRE-DEVELOPMENT PHASE 2', data: [...(localNodesData['PRE-DEVELOPMENT PHASE 2'] || []), ...localOffsets1, ...localOffsets2] },
     { name: 'PRE-DEVELOPMENT PHASE 3', data: localPreDevPhase3 },
-    { name: 'DEVELOPMENT PHASE', data: localDevelopmentPhase },
+    { name: 'DEVELOPMENT PHASE', data: [...localDevelopmentPhase, ...localOffsets3] },
     { name: 'POST-DEVELOPMENT PHASE', data: localPostDevPhase },
-    { name: 'OTHERS', data: [...localOffsets1, ...localOffsets2, ...localOffsets3, ...localOffsets4] }
+    { name: 'OTHERS', data: localOffsets4 }
   ];
 
   const allFlattenedNodes = phasesSummary.reduce((acc, phase) => {
@@ -729,6 +664,8 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     }
     return acc;
   }, [] as NodeData[]);
+
+  const checklistHierarchy = buildChecklistHierarchy(checklistItems);
 
   const getCategoryStats = () => {
       const categories = [
@@ -790,6 +727,8 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
   let totalGrandCompleted = 0;
 
   const dashboardCards = phasesSummary.map(phase => {
+    const checklistPhaseCounts = getPhaseStatusCounts(phase.name, checklistItems);
+    const useChecklistPhaseCounts = checklistItems.length > 0 && checklistPhaseCounts.total > 0;
     let total = 0;
     let completed = 0;
     let overdue = 0;
@@ -843,6 +782,11 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
       if (s2D) maxS2 = maxS2 ? (s2D > maxS2 ? s2D : maxS2) : s2D;
     });
 
+    if (useChecklistPhaseCounts) {
+      total = checklistPhaseCounts.total;
+      completed = checklistPhaseCounts.completed;
+    }
+
     totalGrandTasks += total;
     totalGrandCompleted += completed;
 
@@ -859,6 +803,9 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     return {
       title: phase.name,
       total,
+      completed,
+      pending: useChecklistPhaseCounts ? checklistPhaseCounts.pending + checklistPhaseCounts.notStarted + checklistPhaseCounts.inProgress : Math.max(total - completed, 0),
+      inProgress: useChecklistPhaseCounts ? checklistPhaseCounts.inProgress : 0,
       overdue,
       completionPct,
       t1: formatDateStr(minT1),
@@ -908,13 +855,26 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     );
 
     const totalTasks = getActualRequirementCount(n, checklistItems);
+    const statusCounts = getSequenceNodeStatusCounts(n.title, checklistItems);
 
     const completedTasks =
         matchedChecklistItems.length > 0
-            ? getCompletedChecklistCount(n.title, checklistItems)
+            ? statusCounts.completed
             : n.totalAcq ?? 0;
 
+    const pendingTasks =
+        matchedChecklistItems.length > 0
+            ? statusCounts.pending + statusCounts.notStarted + statusCounts.inProgress
+            : Math.max(totalTasks - completedTasks, 0);
+
     const pct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    const nodeStatusColor = getStatusLegendColor(statText);
+    const displayRequirements = matchedChecklistItems.length > 0
+      ? matchedChecklistItems.map((item) => getChecklistItemName(item))
+      : (n.reqs || "")
+          .split('<br/>')
+          .map((req) => req.trim())
+          .filter(Boolean);
 
     return (
       <div key={n.id} className={`relative flex flex-col items-center transition-all duration-500 ease-in-out ${isDimmed ? 'opacity-50 grayscale-[40%] scale-[0.98]' : 'opacity-100 grayscale-0 scale-100'} ${isHighlighted ? 'z-20' : 'z-10'}`} style={{ width: '300px' }}>
@@ -926,21 +886,24 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
           )}
           {/* Header */}
           <div 
-            className="p-3 flex items-center justify-between cursor-pointer hover:opacity-90 transition-colors duration-300 border-b border-black/10" 
+            className="min-h-[58px] px-4 py-3 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 cursor-pointer hover:opacity-90 transition-colors duration-300 border-b border-black/10" 
             style={{ backgroundColor: n.colorCode }}
             onClick={(e) => { 
                 e.stopPropagation(); 
                 if(!previewMode) setEditingNode(n); 
             }}
           >
-            <div className="flex items-center gap-2.5 flex-1 pr-2">
-                {/* Number icon removed as requested */}
-                <div className="text-black text-[0.65rem] font-bold uppercase tracking-wider leading-tight" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}>
+            <div className="min-w-0 pr-1">
+                <div className="text-black text-[0.65rem] font-bold uppercase tracking-wider leading-snug whitespace-normal break-words" style={{ textShadow: '0 1px 1px rgba(0,0,0,0.2)' }}>
                   {n.title}
                 </div>
             </div>
             {/* Status Pill */}
-            <div className="flex items-center rounded bg-white px-2 py-0.5 text-[0.5rem] font-bold uppercase shadow-sm whitespace-nowrap shrink-0" style={{ color: '#000000' }}>
+            <div
+              className="inline-flex min-w-[88px] items-center justify-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[0.48rem] font-bold uppercase tracking-[0.18em] shadow-sm whitespace-nowrap shrink-0 border"
+              style={{ color: '#000000', borderColor: nodeStatusColor }}
+            >
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: nodeStatusColor }}></span>
                 {statText}
             </div>
           </div>
@@ -951,12 +914,26 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
                 <div className="flex items-baseline justify-between text-black">
                     <div className="flex items-baseline gap-1.5 text-black">
                         <span className="text-xl font-bold tracking-tight">{completedTasks}</span>
-                        <span className="text-xs font-semibold text-black">/ {totalTasks} items</span>
+                        <span className="text-xs font-semibold text-black">/ {totalTasks} DOC. REQ.</span>
                     </div>
                     <span className="text-xs font-bold tracking-tight text-black">{pct}%</span>
                 </div>
                 <div className="w-full h-1.5 bg-[#E5E7EB] rounded-full overflow-hidden">
-                    <div className="h-full transition-all duration-500 bg-[#64799B]" style={{ width: `${pct}%` }}></div>
+                    <div className="h-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: STATUS_LEGEND_COLORS.completed }}></div>
+                </div>
+                <div className="grid grid-cols-2 gap-1 text-[0.52rem] font-bold uppercase text-black">
+                  <div
+                    className="rounded border px-1.5 py-1 text-center"
+                    style={{ backgroundColor: '#4C9A741A', borderColor: '#4C9A744D', color: '#000000' }}
+                  >
+                    Done {completedTasks}
+                  </div>
+                  <div
+                    className="rounded border px-1.5 py-1 text-center"
+                    style={{ backgroundColor: '#C869691A', borderColor: '#C869694D', color: '#000000' }}
+                  >
+                    Pending {pendingTasks}
+                  </div>
                 </div>
             </div>
 
@@ -979,24 +956,27 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
         </div>
 
         {/* Requirements Section */}
-        {n.reqs && !globalShortenedView && (
+        {displayRequirements.length > 0 && !globalShortenedView && (
           <div className="mt-2 w-full flex flex-col items-end text-right px-2 overflow-hidden relative z-10 pb-2 border-t border-slate-100 pt-2">
             <details className="w-full group">
-              <summary className="text-slate-400 hover:text-slate-600 cursor-pointer list-none flex justify-end items-center transition-colors">
+              <summary className="text-slate-400 hover:text-slate-600 cursor-pointer list-none flex justify-end items-center gap-1 transition-colors">
+                <span className="text-[0.55rem] font-bold uppercase">Checklist Requirements: {displayRequirements.length}</span>
                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-200 group-open:rotate-180"><polyline points="6 9 12 15 18 9"></polyline></svg>
               </summary>
               <div className="mt-2 flex flex-col gap-1.5 items-end">
-                {n.reqs.split('<br/>').map((r, idx) => {
-                  const isChecked = toggledReqs[n.id]?.[idx];
+                {displayRequirements.map((r, idx) => {
+                  const isChecked = matchedChecklistItems[idx]
+                    ? normalizeChecklistStatus(matchedChecklistItems[idx]) === 'completed'
+                    : toggledReqs[n.id]?.[idx];
                   return (
                     <button 
-                      key={idx} 
-                      onClick={() => toggleReq(n.id, idx)}
+                      key={`${n.id}-${idx}`} 
+                      onClick={() => matchedChecklistItems.length === 0 && toggleReq(n.id, idx)}
                       className={`block text-[0.6rem] font-semibold leading-tight transition-colors duration-200 hover:opacity-80 text-right w-full flex justify-end
                       ${isChecked ? 'line-through opacity-50' : ''}`}
-                      style={{ color: '#ff0000' }}
+                      style={{ color: matchedChecklistItems.length > 0 ? '#334155' : '#ff0000' }}
                     >
-                      <span className="max-w-full break-all">{r}</span>
+                      <span className="max-w-full break-all">{idx + 1}. {r}</span>
                     </button>
                   );
                 })}
@@ -1020,42 +1000,57 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     );
   };
 
-  const renderDashboardCardHeader = (phaseTitle: string, widthCss: string) => {
+  const PHASE_CARD_WIDTH = 360;
+  const PHASE_CARD_GAP = 48;
+
+  const renderDashboardCardHeader = (phaseTitle: string, widthPx: number) => {
     const card = dashboardCards.find(c => c.title === phaseTitle);
     if (!card) return null;
+
+    const metricCards = [
+      { label: 'Total Req.', value: card.total, Icon: Users },
+      { label: 'Completed', value: card.completed, Icon: CheckCircle2 },
+      { label: 'Pending', value: card.pending, Icon: Flag },
+      { label: 'Overdue', value: card.overdue, Icon: Clock },
+    ];
+
     return (
-      <div className={`shrink-0 mb-8 bg-white border text-left border-[#E5E7EB] rounded-xl shadow-sm hover:shadow-md transition-shadow duration-300 ${widthCss}`}>
-        <div className="bg-[#f8f9fb] px-4 py-3 border-b border-[#E5E7EB] rounded-t-xl flex items-center justify-between">
-          <div className="flex items-center gap-3 overflow-hidden">
-            <ClipboardList className="w-5 h-5 text-black shrink-0" />
-            <h3 className="text-[12px] font-bold text-black uppercase tracking-wide truncate pr-2" title={card.title}>{card.title}</h3>
+      <div
+        className="shrink-0 mb-8 bg-white border text-left border-[#E5E7EB] rounded-xl shadow-sm hover:shadow-md transition-shadow duration-300"
+        style={{ width: `${widthPx}px` }}
+      >
+        <div className="relative bg-[#f8f9fb] px-5 py-4 border-b border-[#E5E7EB] rounded-t-xl min-h-[96px] flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl bg-white border border-[#E5E7EB] flex items-center justify-center shrink-0 shadow-sm mt-0.5">
+            <ClipboardList className="w-5 h-5 text-black" />
           </div>
-          <div className="flex items-center gap-2 bg-white border border-[#E5E7EB] rounded-full px-2 py-1 shadow-sm shrink-0" style={{ borderColor: card.statusColor }}>
-            <div className={`w-2 h-2 rounded-full`} style={{ backgroundColor: card.statusColor }}></div>
-            <span className="text-[9px] font-bold tracking-widest uppercase" style={{ color: '#000000' }}>{card.statusText}</span>
+          <h3
+            className="min-w-0 pr-[118px] text-[14px] font-bold text-black uppercase tracking-wide leading-tight whitespace-normal break-words"
+            title={card.title}
+          >
+            {card.title}
+          </h3>
+          <div
+            className="absolute right-5 top-4 inline-flex w-[112px] h-8 items-center justify-center gap-2 bg-white border border-[#E5E7EB] rounded-full px-3 shadow-sm"
+            style={{ borderColor: card.statusColor }}
+          >
+            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: card.statusColor }}></div>
+            <span className="text-[8px] font-bold tracking-[0.24em] uppercase whitespace-nowrap" style={{ color: '#000000' }}>{card.statusText}</span>
           </div>
         </div>
         
-        <div className="p-4 flex flex-col gap-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex items-center gap-2 border-r border-[#E5E7EB] pr-3">
-              <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                <Users className="w-4 h-4 text-black" />
+        <div className="p-5 flex flex-col gap-4">
+          <div className="grid grid-cols-4 gap-2">
+            {metricCards.map(({ label, value, Icon }) => (
+              <div key={label} className="min-w-0 rounded-xl bg-white border border-[#E5E7EB] px-2 py-2.5 flex flex-col items-center justify-start text-center shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 mb-1.5">
+                  <Icon className="w-4 h-4 text-black" />
+                </div>
+                <span className="block w-full min-h-[22px] text-[9px] font-semibold text-black leading-[11px] break-words">
+                  {label}
+                </span>
+                <span className="mt-0.5 text-xl font-bold text-black leading-none">{value}</span>
               </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] font-medium text-black mb-0.5">Total</span>
-                <span className="text-lg font-bold text-black leading-none">{card.total}</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 pl-1">
-              <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                 <Clock className="w-4 h-4 text-black" />
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] font-medium text-black mb-0.5">Overdue</span>
-                <span className="text-lg font-bold text-black leading-none">{card.overdue}</span>
-              </div>
-            </div>
+            ))}
           </div>
 
           <div className="flex items-center gap-3">
@@ -1066,90 +1061,81 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
           </div>
 
           <div className="pt-3 border-t border-[#E5E7EB]">
-            <div className="flex items-center justify-end gap-2 text-[9px] font-bold text-black mb-2">
-              <div className="w-[85px] text-center tracking-widest uppercase">Target</div>
-              <div className="w-[85px] text-center tracking-widest uppercase">Actual</div>
+            <div className="grid grid-cols-[28px_68px_minmax(0,1fr)_14px_minmax(0,1fr)] items-center gap-2 text-[9px] font-bold text-black mb-2">
+              <div></div>
+              <div></div>
+              <div className="text-center tracking-widest uppercase">Target</div>
+              <div></div>
+              <div className="text-center tracking-widest uppercase">Actual</div>
             </div>
             
             <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center shrink-0">
+              <div className="grid grid-cols-[28px_68px_minmax(0,1fr)_14px_minmax(0,1fr)] items-center gap-2 text-xs font-semibold text-black">
+                <div className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center shrink-0">
                   <Clock className="w-3 h-3 text-black" />
                 </div>
-                <div className="flex-1 flex justify-between items-center text-xs font-semibold text-black">
-                  <span className="w-12 text-[11px]">Duration</span>
-                  <div className="flex items-center gap-1">
-                    <div className="flex items-center justify-center border-b border-transparent hover:border-[#E5E7EB] transition-colors w-[85px]" style={{ borderColor: card.durTarget ? card.statusColor : undefined }}>
-                      <input 
-                        type="number" 
-                        placeholder="0" 
-                        value={card.durTarget}
-                        onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetUnit: 'Months', actualNum: '', actualUnit: 'Months' }), targetNum: e.target.value } }))}
-                        className="w-10 text-right bg-transparent p-0 m-0 border-none rounded-none focus:ring-0 text-[11px] placeholder:text-black font-bold" 
-                        style={{ color: '#000000' }}
-                      />
-                      <select 
-                        value={card.durTargetUnit}
-                        onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetNum: '', actualNum: '', actualUnit: 'Months' }), targetUnit: e.target.value } }))}
-                        className="text-[10px] font-semibold bg-transparent p-0 pl-1 m-0 border-none rounded-none focus:ring-0 appearance-none cursor-pointer"
-                        style={{ color: '#000000' }}
-                      >
-                        <option value="Days" style={{ color: '#000' }}>Days</option>
-                        <option value="Months" style={{ color: '#000' }}>Months</option>
-                        <option value="Years" style={{ color: '#000' }}>Years</option>
-                      </select>
-                    </div>
-                    <ArrowRight className="w-3 h-3 text-slate-300 shrink-0 mx-0.5" />
-                    <div className="flex items-center justify-center border-b border-transparent hover:border-[#E5E7EB] transition-colors w-[85px]" style={{ borderColor: card.durActual ? card.statusColor : undefined }}>
-                      <input 
-                        type="number" 
-                        placeholder="0" 
-                        value={card.durActual}
-                        onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetNum: '', targetUnit: 'Months', actualUnit: 'Months' }), actualNum: e.target.value } }))}
-                        className="w-10 text-right bg-transparent p-0 m-0 border-none rounded-none focus:ring-0 text-[11px] placeholder:text-black font-bold" 
-                        style={{ color: '#000000' }}
-                      />
-                      <select 
-                        value={card.durActualUnit}
-                        onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetNum: '', targetUnit: 'Months', actualNum: '' }), actualUnit: e.target.value } }))}
-                        className="text-[10px] font-semibold bg-transparent p-0 pl-1 m-0 border-none rounded-none focus:ring-0 appearance-none cursor-pointer"
-                        style={{ color: '#000000' }}
-                      >
-                        <option value="Days" style={{ color: '#000' }}>Days</option>
-                        <option value="Months" style={{ color: '#000' }}>Months</option>
-                        <option value="Years" style={{ color: '#000' }}>Years</option>
-                      </select>
-                    </div>
-                  </div>
+                <span className="text-[11px] font-bold">Duration</span>
+                <div className="min-w-0 flex items-center justify-center border-b border-transparent hover:border-[#E5E7EB] transition-colors" style={{ borderColor: card.durTarget ? card.statusColor : undefined }}>
+                  <input 
+                    type="number" 
+                    placeholder="0" 
+                    value={card.durTarget}
+                    onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetUnit: 'Months', actualNum: '', actualUnit: 'Months' }), targetNum: e.target.value } }))}
+                    className="w-9 text-right bg-transparent p-0 m-0 border-none rounded-none focus:ring-0 text-[11px] placeholder:text-black font-bold" 
+                    style={{ color: '#000000' }}
+                  />
+                  <select 
+                    value={card.durTargetUnit}
+                    onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetNum: '', actualNum: '', actualUnit: 'Months' }), targetUnit: e.target.value } }))}
+                    className="min-w-0 text-[10px] font-semibold bg-transparent p-0 pl-1 m-0 border-none rounded-none focus:ring-0 appearance-none cursor-pointer"
+                    style={{ color: '#000000' }}
+                  >
+                    <option value="Days" style={{ color: '#000' }}>Days</option>
+                    <option value="Months" style={{ color: '#000' }}>Months</option>
+                    <option value="Years" style={{ color: '#000' }}>Years</option>
+                  </select>
+                </div>
+                <ArrowRight className="w-3 h-3 text-slate-300 shrink-0 mx-auto" />
+                <div className="min-w-0 flex items-center justify-center border-b border-transparent hover:border-[#E5E7EB] transition-colors" style={{ borderColor: card.durActual ? card.statusColor : undefined }}>
+                  <input 
+                    type="number" 
+                    placeholder="0" 
+                    value={card.durActual}
+                    onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetNum: '', targetUnit: 'Months', actualUnit: 'Months' }), actualNum: e.target.value } }))}
+                    className="w-9 text-right bg-transparent p-0 m-0 border-none rounded-none focus:ring-0 text-[11px] placeholder:text-black font-bold" 
+                    style={{ color: '#000000' }}
+                  />
+                  <select 
+                    value={card.durActualUnit}
+                    onChange={(e) => setPhaseDurations(prev => ({ ...prev, [card.title]: { ...(prev[card.title] || { targetNum: '', targetUnit: 'Months', actualNum: '' }), actualUnit: e.target.value } }))}
+                    className="min-w-0 text-[10px] font-semibold bg-transparent p-0 pl-1 m-0 border-none rounded-none focus:ring-0 appearance-none cursor-pointer"
+                    style={{ color: '#000000' }}
+                  >
+                    <option value="Days" style={{ color: '#000' }}>Days</option>
+                    <option value="Months" style={{ color: '#000' }}>Months</option>
+                    <option value="Years" style={{ color: '#000' }}>Years</option>
+                  </select>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center shrink-0">
+              <div className="grid grid-cols-[28px_68px_minmax(0,1fr)_14px_minmax(0,1fr)] items-center gap-2 text-xs font-semibold text-black">
+                <div className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center shrink-0">
                   <Calendar className="w-3 h-3 text-black" />
                 </div>
-                <div className="flex-1 flex justify-between items-center text-xs font-semibold text-black">
-                  <span className="w-12 text-[11px]">Start</span>
-                  <div className="flex items-center gap-1">
-                    <input type="date" defaultValue={card.t1} className="w-[85px] text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
-                    <ArrowRight className="w-3 h-3 text-slate-300 shrink-0 mx-0.5" />
-                    <input type="date" defaultValue={card.s1} className="w-[85px] text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
-                  </div>
-                </div>
+                <span className="text-[11px] font-bold">Start</span>
+                <input type="date" defaultValue={card.t1} className="w-full min-w-0 text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
+                <ArrowRight className="w-3 h-3 text-slate-300 shrink-0 mx-auto" />
+                <input type="date" defaultValue={card.s1} className="w-full min-w-0 text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
               </div>
 
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center shrink-0">
+              <div className="grid grid-cols-[28px_68px_minmax(0,1fr)_14px_minmax(0,1fr)] items-center gap-2 text-xs font-semibold text-black">
+                <div className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center shrink-0">
                   <Flag className="w-3 h-3 text-black" />
                 </div>
-                <div className="flex-1 flex justify-between items-center text-xs font-semibold text-black">
-                  <span className="w-12 text-[11px]">End</span>
-                  <div className="flex items-center gap-1">
-                    <input type="date" defaultValue={card.t2} className="w-[85px] text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
-                    <ArrowRight className="w-3 h-3 text-slate-300 shrink-0 mx-0.5" />
-                    <input type="date" defaultValue={card.s2} className="w-[85px] text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
-                  </div>
-                </div>
+                <span className="text-[11px] font-bold">End</span>
+                <input type="date" defaultValue={card.t2} className="w-full min-w-0 text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
+                <ArrowRight className="w-3 h-3 text-slate-300 shrink-0 mx-auto" />
+                <input type="date" defaultValue={card.s2} className="w-full min-w-0 text-center text-black bg-transparent border-b border-transparent focus:border-[#4C9A74] hover:border-[#E5E7EB] p-0 m-0 rounded-none focus:ring-0 text-[11px] transition-colors [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:m-0" />
               </div>
 
             </div>
@@ -1160,8 +1146,8 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
   };
 
   const renderPhaseGroup = (phaseTitle: string, nodeGroups: (NodeData[] | null)[]) => {
-    const colWidth = 300;
-    const gap = 40;
+    const colWidth = PHASE_CARD_WIDTH;
+    const gap = PHASE_CARD_GAP;
     const span = nodeGroups.length;
     const totalWidth = span * colWidth + (span - 1) * gap;
 
@@ -1174,7 +1160,7 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
 
     return (
       <div className={`flex flex-col shrink-0 transition-all duration-500 ease-in-out ${isOtherMatched ? 'opacity-60 scale-[0.98]' : 'opacity-100 scale-100'}`}>
-        {renderDashboardCardHeader(phaseTitle, `w-[${totalWidth}px]`)}
+        {renderDashboardCardHeader(phaseTitle, totalWidth)}
         <div className="flex" style={{ gap: `${gap}px` }}>
           {nodeGroups.map((nodes, idx) => (
             <div key={idx} className="flex flex-col" style={{ width: `${colWidth}px` }}>
@@ -1191,8 +1177,11 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     const isOtherMatched = selectedPhase !== 'All' && selectedPhase !== phaseTitle;
 
     return (
-      <div className={`flex flex-col flex-shrink-0 w-[300px] transition-all duration-500 ease-in-out ${isOtherMatched ? 'opacity-60 scale-[0.98]' : 'opacity-100 scale-100'}`}>
-        {renderDashboardCardHeader(phaseTitle, `w-[300px]`)}
+      <div
+        className={`flex flex-col flex-shrink-0 transition-all duration-500 ease-in-out ${isOtherMatched ? 'opacity-60 scale-[0.98]' : 'opacity-100 scale-100'}`}
+        style={{ width: `${PHASE_CARD_WIDTH}px` }}
+      >
+        {renderDashboardCardHeader(phaseTitle, PHASE_CARD_WIDTH)}
         {nodes.map((n, i) => renderNode(n, isMatched && selectedPhase !== 'All', isOtherMatched, i, nodes.length))}
       </div>
     );
@@ -1204,8 +1193,11 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     const nodes = localNodesData['COMPETITIVE SELECTION PROCESS'];
     
     return (
-      <div className={`flex flex-col flex-shrink-0 w-[300px] transition-all duration-500 ease-in-out ${isOtherMatched ? 'opacity-60 scale-[0.98]' : 'opacity-100 scale-100'}`}>
-        {renderDashboardCardHeader('COMPETITIVE SELECTION PROCESS', `w-[300px]`)}
+      <div
+        className={`flex flex-col flex-shrink-0 transition-all duration-500 ease-in-out ${isOtherMatched ? 'opacity-60 scale-[0.98]' : 'opacity-100 scale-100'}`}
+        style={{ width: `${PHASE_CARD_WIDTH}px` }}
+      >
+        {renderDashboardCardHeader('COMPETITIVE SELECTION PROCESS', PHASE_CARD_WIDTH)}
         {nodes.map((n, i) => renderNode(n, isMatched && selectedPhase !== 'All', isOtherMatched, i, nodes.length))}
       </div>
     );
@@ -1364,7 +1356,7 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
           style={{
             minWidth: 'max-content',
             minHeight: 'max-content',
-            padding: '32px',
+            padding: '24px',
             transform: `scale(${zoomLevel})`,
             marginBottom: `${Math.max(0, (zoomLevel - 1) * 1200)}px`, // pad scrollbox
             marginRight: `${Math.max(0, (zoomLevel - 1) * 3600)}px`
@@ -1550,8 +1542,8 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
                   <div className="flex gap-4 items-center flex-wrap">
                       <div className="flex items-center gap-1">DEPENDENCIES: <span className="font-extrabold text-red-500">--</span> REGULATORY & CRITICAL PERMIT <span className="font-extrabold text-black ml-1">--</span> COORDINATION LINKS</div>
                       <div className="flex items-center gap-1">REQUIREMENTS: 
-                          <span className="inline-block w-2.5 h-2.5 bg-[#4C9A74] mx-0.5"></span> ACQUIRED / COMPLETED
-                          <span className="inline-block w-2.5 h-2.5 bg-[#C86969] mx-0.5 ml-1.5"></span> PENDING / ONGOING
+                          <span className="inline-block w-2.5 h-2.5 mx-0.5" style={{ backgroundColor: STATUS_LEGEND_COLORS.completed }}></span> ACQUIRED / COMPLETED
+                          <span className="inline-block w-2.5 h-2.5 mx-0.5 ml-1.5" style={{ backgroundColor: STATUS_LEGEND_COLORS.delayed }}></span> PENDING / ONGOING
                       </div>
                        <div className="flex items-center gap-1">CATEGORY: 
                           <span className="inline-block w-2.5 h-2.5 mx-0.5" style={{ backgroundColor: '#D6B77A' }}></span> ACTIVITIES
@@ -1562,11 +1554,11 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
                </div>
                <div className="flex gap-3 items-center shrink-0 ml-4">
                     OVERALL STATUS: 
-                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: '#64799B' }}></span> ONGOING</span>
-                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: '#4C9A74' }}></span> COMPLETED</span>
-                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: '#C86969' }}></span> DELAYED</span>
-                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: '#94a3b8' }}></span> NOT APPLICABLE</span>
-                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: '#64748b' }}></span> NOT YET STARTED</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: STATUS_LEGEND_COLORS.ongoing }}></span> ONGOING</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: STATUS_LEGEND_COLORS.completed }}></span> COMPLETED</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: STATUS_LEGEND_COLORS.delayed }}></span> DELAYED</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: STATUS_LEGEND_COLORS.notApplicable }}></span> NOT APPLICABLE</span>
+                    <span className="flex items-center gap-1"><span className="inline-block w-2.5 h-2.5" style={{ backgroundColor: STATUS_LEGEND_COLORS.notYetStarted }}></span> NOT YET STARTED</span>
                </div>
             </div>
 
@@ -1577,16 +1569,42 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
                 <h2 className="text-lg font-bold text-[#1e293b] m-0 mb-3">Overall Status</h2>
                 <div className="flex items-center gap-4 mb-6">
                   <div className="flex-1 bg-[#e2e8f0] rounded-full h-[18px] ring-1 ring-inset ring-slate-300/50 overflow-hidden">
-                    <div className="bg-gradient-to-r from-[#5FAF89] to-[#4C9A74] h-[18px] rounded-full transition-all duration-500" style={{ width: `${overallCompletionPct}%` }}></div>
+                    <div className="h-[18px] rounded-full transition-all duration-500" style={{ width: `${overallCompletionPct}%`, backgroundColor: STATUS_LEGEND_COLORS.completed }}></div>
                   </div>
-                  <div className="text-2xl font-bold text-emerald-600 w-16 text-right leading-none">{overallCompletionPct}%</div>
+                  <div className="text-2xl font-bold w-16 text-right leading-none" style={{ color: STATUS_LEGEND_COLORS.completed }}>{overallCompletionPct}%</div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-5">
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="text-[9px] font-bold uppercase text-slate-500">Phases</div>
+                    <div className="text-xl font-bold text-black">{checklistHierarchy.totals.phases}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="text-[9px] font-bold uppercase text-slate-500">Mother Permits</div>
+                    <div className="text-xl font-bold text-black">{checklistHierarchy.totals.motherPermits}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="text-[9px] font-bold uppercase text-slate-500">Actual Requirements</div>
+                    <div className="text-xl font-bold text-black">{checklistHierarchy.totals.total}</div>
+                  </div>
+                  <div className="rounded-lg border bg-white p-3" style={{ borderColor: `${STATUS_LEGEND_COLORS.completed}33` }}>
+                    <div className="text-[9px] font-bold uppercase" style={{ color: STATUS_LEGEND_COLORS.completed }}>Completed</div>
+                    <div className="text-xl font-bold" style={{ color: STATUS_LEGEND_COLORS.completed }}>{checklistHierarchy.totals.completed}</div>
+                  </div>
+                  <div className="rounded-lg border bg-white p-3" style={{ borderColor: `${STATUS_LEGEND_COLORS.ongoing}33` }}>
+                    <div className="text-[9px] font-bold uppercase" style={{ color: STATUS_LEGEND_COLORS.ongoing }}>In Progress</div>
+                    <div className="text-xl font-bold" style={{ color: STATUS_LEGEND_COLORS.ongoing }}>{checklistHierarchy.totals.inProgress}</div>
+                  </div>
+                  <div className="rounded-lg border bg-white p-3" style={{ borderColor: `${STATUS_LEGEND_COLORS.notYetStarted}33` }}>
+                    <div className="text-[9px] font-bold uppercase" style={{ color: STATUS_LEGEND_COLORS.notYetStarted }}>Pending / Not Started</div>
+                    <div className="text-xl font-bold" style={{ color: STATUS_LEGEND_COLORS.notYetStarted }}>{checklistHierarchy.totals.pending + checklistHierarchy.totals.notStarted}</div>
+                  </div>
                 </div>
               </div>
               
             </div>
 
             {/* Grid Flow */}
-            <div className="flex gap-10 relative pb-10">
+            <div className="flex relative pb-10" style={{ gap: `${PHASE_CARD_GAP}px` }}>
                 
                 {renderCSPCol()}
                 {renderPhaseCol('PRE-DEVELOPMENT PHASE 1', localNodesData['PRE-DEVELOPMENT PHASE 1'])}
@@ -1601,13 +1619,12 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
                 
                 {renderPhaseGroup('DEVELOPMENT PHASE', [
                   localDevelopmentPhase,
-                  localOffsets3,
-                  localOffsets4
+                  localOffsets3
                 ])}
 
                 {renderPhaseCol('POST-DEVELOPMENT PHASE', localPostDevPhase)}
                 
-                {renderPhaseCol('OTHERS', [])}
+                {renderPhaseCol('OTHERS', localOffsets4)}
 
             </div>
           </div>

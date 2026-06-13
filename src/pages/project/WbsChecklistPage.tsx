@@ -9,6 +9,13 @@ import {
 } from "lucide-react";
 import { originalItems, ChecklistItem } from "../../data/wbsChecklistData";
 import { useAccess } from "../../lib/accessControl";
+import {
+  buildChecklistHierarchy,
+  buildChecklistNumbering,
+  getChecklistStatusCounts,
+  mergeChecklistSourceRows,
+  type ChecklistStatusCounts,
+} from "../../utils/wbsAlignment";
 
 const initialItems = originalItems;
 
@@ -174,74 +181,11 @@ export default function WbsChecklistPage() {
   }, []);
 
   const items = useMemo(() => {
-    const initialIds = new Set(initialItems.map((item) => String(item.id)));
-    const dbByOriginalId = new Map<string, DbChecklistItem>();
-
-    dbItems.forEach((item) => {
-      const key = String(item.original_item_id || item.id);
-      dbByOriginalId.set(key, item);
-    });
-
-    const mergedInitialItems = initialItems.map((baseItem) => {
-      const originalId = String(baseItem.id);
-      const savedItem = dbByOriginalId.get(originalId);
-      const localOverride = overrides[originalId] || {};
-
-      const merged: DbChecklistItem = {
-  ...baseItem,
-  checked: false,
-  status: "Not Started",
-  ...(savedItem || {}),
-  ...localOverride,
-  id: originalId,
-  original_item_id: originalId,
-  is_manual: false,
-};
-
-const finalChecked =
-  localOverride.checked === true || savedItem?.checked === true;
-
-merged.checked = finalChecked;
-
-if (finalChecked) {
-  merged.status = "Completed";
-} else {
-  merged.status =
-    localOverride.status ||
-    savedItem?.status ||
-    "Not Started";
-}
-
-      return merged;
-    });
-
-    const manualDbItems = dbItems
-      .filter((item) => {
-        const originalId = String(item.original_item_id || item.id);
-        return item.is_manual || !initialIds.has(originalId);
-      })
-      .map((item) => {
-        const originalId = String(item.original_item_id || item.id);
-        const localOverride = overrides[originalId] || {};
-
-        const merged: DbChecklistItem = {
-          ...item,
-          ...localOverride,
-          id: originalId,
-          original_item_id: originalId,
-        };
-
-        if (merged.checked === true) {
-  merged.status = "Completed";
-} else {
-  merged.checked = false;
-  merged.status = merged.status || "Not Started";
-}
-
-        return merged;
-      });
-
-    return [...mergedInitialItems, ...manualDbItems];
+    return mergeChecklistSourceRows<DbChecklistItem>(
+      initialItems as DbChecklistItem[],
+      dbItems,
+      overrides as Record<string, Partial<DbChecklistItem>>
+    );
   }, [dbItems, overrides]);
 
   const phasesList = useMemo(() => {
@@ -266,6 +210,10 @@ if (finalChecked) {
         " " +
         (item.requirement || "") +
         " " +
+        (item.section || "") +
+        " " +
+        (item.subsection || "") +
+        " " +
         (item.department || "")
       )
         .toLowerCase()
@@ -277,6 +225,74 @@ if (finalChecked) {
       return true;
     });
   }, [items, searchQuery, phaseFilter]);
+
+  const checklistHierarchy = useMemo(() => buildChecklistHierarchy(items), [items]);
+
+  const checklistNumbering = useMemo(() => buildChecklistNumbering(items), [items]);
+
+  const visibleCounts = useMemo(
+    () => getChecklistStatusCounts(filteredItems),
+    [filteredItems]
+  );
+
+  const getPhaseCounts = (phaseName: string): ChecklistStatusCounts =>
+    checklistHierarchy.phases[phaseName]?.counts || {
+      total: 0,
+      completed: 0,
+      inProgress: 0,
+      pending: 0,
+      notStarted: 0,
+      delayed: 0,
+    };
+
+  const getMotherPermitCounts = (
+    phaseName: string,
+    motherPermitName: string
+  ): ChecklistStatusCounts =>
+    checklistHierarchy.phases[phaseName]?.motherPermits[motherPermitName]
+      ?.counts || {
+      total: 0,
+      completed: 0,
+      inProgress: 0,
+      pending: 0,
+      notStarted: 0,
+      delayed: 0,
+    };
+
+  const getParentTaskCounts = (
+    phaseName: string,
+    motherPermitName: string,
+    parentTaskName: string
+  ): ChecklistStatusCounts =>
+    checklistHierarchy.phases[phaseName]?.motherPermits[motherPermitName]
+      ?.tasks[parentTaskName]?.counts || {
+      total: 0,
+      completed: 0,
+      inProgress: 0,
+      pending: 0,
+      notStarted: 0,
+      delayed: 0,
+    };
+
+  const renderCountsBadges = (counts: ChecklistStatusCounts, label = "Total Requirements") => (
+    <div className="flex flex-wrap items-center gap-1.5 normal-case tracking-normal">
+      <span className="inline-flex items-center rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-bold text-slate-700 border border-white/80">
+        {label}: {counts.total}
+      </span>
+      <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 border border-emerald-100">
+        Completed: {counts.completed}
+      </span>
+      <span className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700 border border-blue-100">
+        In Progress: {counts.inProgress}
+      </span>
+      <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-100">
+        Pending: {counts.pending}
+      </span>
+      <span className="inline-flex items-center rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-bold text-slate-600 border border-slate-100">
+        Not Started: {counts.notStarted}
+      </span>
+    </div>
+  );
 
   const groupedData = useMemo(() => {
     const root: Record<string, any> = {};
@@ -582,6 +598,37 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
         </div>
       )}
 
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-4" data-report-preserve="true">
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Phases</div>
+          <div className="text-2xl font-bold text-slate-900">{checklistHierarchy.totals.phases}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Mother Permits</div>
+          <div className="text-2xl font-bold text-slate-900">{checklistHierarchy.totals.motherPermits}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Parent Tasks</div>
+          <div className="text-2xl font-bold text-slate-900">{checklistHierarchy.totals.parentTasks}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Total Requirements</div>
+          <div className="text-2xl font-bold text-slate-900">{checklistHierarchy.totals.total}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Completed</div>
+          <div className="text-2xl font-bold text-emerald-600">{checklistHierarchy.totals.completed}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Pending / In Progress</div>
+          <div className="text-2xl font-bold text-blue-600">{checklistHierarchy.totals.pending + checklistHierarchy.totals.inProgress}</div>
+        </div>
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Visible Rows</div>
+          <div className="text-2xl font-bold text-slate-900">{visibleCounts.total}</div>
+        </div>
+      </div>
+
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-sm whitespace-nowrap">
@@ -638,6 +685,8 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                     text: "#475569",
                   };
 
+                  const phaseCounts = getPhaseCounts(phaseName);
+
                   return (
                     <React.Fragment key={phaseName}>
                       <tr style={{ backgroundColor: phaseColors.bg }}>
@@ -646,7 +695,10 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                           className="px-6 py-3 font-bold uppercase tracking-widest text-xs"
                           style={{ color: phaseColors.text }}
                         >
-                          {phaseName}
+                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <span>{phaseName}</span>
+                            {renderCountsBadges(phaseCounts, "Total Requirements")}
+                          </div>
                         </td>
 
                         <td className="px-6 py-3 text-center">
@@ -666,7 +718,12 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                       {Object.keys(phaseData.categories).map(
                         (catName, catIndex) => {
                           const catData = phaseData.categories[catName];
-                          const catId = `P${phaseIndex + 1}-C${catIndex + 1}`;
+                          const firstCatItem = catData._items[0];
+                          const catNumbering = firstCatItem
+                            ? checklistNumbering.get(String(firstCatItem.original_item_id || firstCatItem.id))
+                            : null;
+                          const catId = catNumbering?.motherPermitCode || `P${phaseIndex + 1}-C${catIndex + 1}`;
+                          const catCounts = getMotherPermitCounts(phaseName, catName);
                           const catExpanded =
                             expandedNodes[`${phaseName}|${catName}`];
 
@@ -691,7 +748,10 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                                   className="px-4 py-4 font-semibold text-slate-800 uppercase text-xs break-words whitespace-normal"
                                   colSpan={8}
                                 >
-                                  {catName}
+                                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                    <span>{catName}</span>
+                                    {renderCountsBadges(catCounts, "Requirements")}
+                                  </div>
                                 </td>
 
                                 <td className="px-6 py-3 text-center">
@@ -716,7 +776,12 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                                 Object.keys(catData.tasks).map(
                                   (taskName, taskIndex) => {
                                     const taskData = catData.tasks[taskName];
-                                    const taskId = `${catId}.${taskIndex + 1}`;
+                                    const firstTaskItem = taskData._items[0];
+                                    const taskNumbering = firstTaskItem
+                                      ? checklistNumbering.get(String(firstTaskItem.original_item_id || firstTaskItem.id))
+                                      : null;
+                                    const taskId = taskNumbering?.parentTaskCode || `${catId}.${taskIndex + 1}`;
+                                    const taskCounts = getParentTaskCounts(phaseName, catName, taskName);
                                     const taskExpanded =
                                       expandedNodes[
                                         `${phaseName}|${catName}|${taskName}`
@@ -745,7 +810,10 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                                             className="px-4 py-3 font-semibold text-slate-600 uppercase text-[11px] break-words whitespace-normal"
                                             colSpan={8}
                                           >
-                                            {taskName}
+                                            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                                              <span>{taskName}</span>
+                                              {renderCountsBadges(taskCounts, "Requirements")}
+                                            </div>
                                           </td>
 
                                           <td className="px-6 py-3 text-center">
@@ -774,7 +842,7 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                                               itemIndex: number
                                             ) => {
                                               const itemId =
-                                                item.item_no ||
+                                                checklistNumbering.get(String(item.original_item_id || item.id))?.itemCode ||
                                                 `${taskId}.${itemIndex + 1}`;
 
                                               return (
