@@ -323,23 +323,23 @@ const loadEmployees = async () => {
             <button className="btn btn-secondary" onClick={() => setIsModalOpen(true)} style={{ marginTop: '16px' }}>Add your first employee</button>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '24px' }}>
             {filteredEmployees.map(emp => (
-              <div key={emp.id} style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div key={emp.id} style={{ display: 'flex', flexDirection: 'column', minWidth: 0, height: '100%', overflow: 'hidden', background: 'var(--bg-surface)', padding: '20px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', boxShadow: 'var(--shadow-sm)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', minWidth: 0, marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flex: 1, minWidth: 0 }}>
                     <div style={{ width: '48px', height: '48px', background: '#eff6ff', color: '#3b82f6', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.25rem', flexShrink: 0 }}>
                       {emp.name.charAt(0)}
                     </div>
-                    <div style={{ overflow: 'hidden' }}>
-                      <h3 style={{ fontWeight: 600, color: 'var(--text-main)', fontSize: '1rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{emp.name}</h3>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{emp.position}</p>
-                      <span style={{ display: 'inline-block', marginTop: '4px', padding: '2px 6px', background: '#eff6ff', color: '#2563eb', fontSize: '0.75rem', fontWeight: 500, borderRadius: '4px' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <h3 title={emp.name} style={{ margin: 0, fontWeight: 600, color: 'var(--text-main)', fontSize: '1rem', lineHeight: 1.3, overflowWrap: 'anywhere' }}>{emp.name}</h3>
+                      <p title={emp.position} style={{ margin: '2px 0 0', fontSize: '0.85rem', lineHeight: 1.35, color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>{emp.position}</p>
+                      <span title={String(emp.id)} style={{ display: 'block', width: '100%', maxWidth: '100%', marginTop: '6px', padding: '3px 6px', background: '#eff6ff', color: '#2563eb', fontSize: '0.72rem', fontWeight: 500, lineHeight: 1.35, borderRadius: '4px', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
                         {emp.id}
                       </span>
                     </div>
                   </div>
-                  <span style={{ padding: '2px 8px', background: '#dcfce7', color: '#166534', fontSize: '0.7rem', fontWeight: 700, borderRadius: '9999px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <span style={{ flexShrink: 0, maxWidth: '82px', padding: '2px 8px', background: '#dcfce7', color: '#166534', fontSize: '0.7rem', fontWeight: 700, lineHeight: 1.4, textAlign: 'center', borderRadius: '9999px', textTransform: 'uppercase', letterSpacing: '0.03em', overflowWrap: 'anywhere' }}>
                     {emp.status}
                   </span>
                 </div>
@@ -355,11 +355,11 @@ const loadEmployees = async () => {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Mail size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} /> 
-                    <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{emp.email}</span>
+                    <span title={emp.email} style={{ minWidth: 0, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{emp.email}</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Phone size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} /> 
-                    <span>{emp.phone}</span>
+                    <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{emp.phone}</span>
                   </div>
                 </div>
 
