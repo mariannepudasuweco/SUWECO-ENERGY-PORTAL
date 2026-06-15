@@ -306,9 +306,15 @@
             <div class="modal-body">
                 <form id="manilaForm">
                     <div style="background: var(--bg-body); padding: 16px; border-radius: var(--radius-md); border: 1px solid var(--border-color); margin-bottom: 20px;">
-                        <h3 style="font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; color: var(--primary);">PRS Linkage</h3>
-                        <div class="form-group" style="margin-bottom: 12px;">
-                            <label style="font-weight: 600; font-size: 0.85rem;">Select PRS</label>
+                        <div style="display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 12px;">
+                            <h3 style="font-size: 0.95rem; font-weight: 600; color: var(--primary); margin: 0;">Request Linkage</h3>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600;">
+                                <input type="checkbox" id="manilaStandaloneToggle" onchange="toggleManilaStandalone()" style="width: auto;">
+                                Standalone record
+                            </label>
+                        </div>
+                        <div id="manilaPrsSelectGroup" class="form-group" style="margin-bottom: 12px;">
+                            <label style="font-weight: 600; font-size: 0.85rem;">Select Request / PRS</label>
                             <select id="manilaPrsSelect" onchange="handleManilaPrsChange()" required>
                                 <option value="">Select existing PRS (MNL-MNL or LCL-MNL only)</option>
                             </select>
@@ -317,33 +323,33 @@
                         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label style="font-size: 0.75rem;">Process</label>
-                                <input type="text" id="manilaProcess" readonly style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
+                                <input type="text" id="manilaProcess" style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
                             </div>
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label style="font-size: 0.75rem;">Purchase</label>
-                                <input type="text" id="manilaPurchase" readonly style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
+                                <input type="text" id="manilaPurchase" style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
                             </div>
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label style="font-size: 0.75rem;">Fund</label>
-                                <input type="text" id="manilaFund" readonly style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
+                                <input type="text" id="manilaFund" style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
                             </div>
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label style="font-size: 0.75rem;">Designation</label>
-                                <input type="text" id="manilaDesignation" readonly style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
+                                <input type="text" id="manilaDesignation" style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
                             </div>
                         </div>
                         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px;">
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label style="font-size: 0.75rem;">PRS No.</label>
-                                <input type="text" id="manilaPrsNo" readonly style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
+                                <input type="text" id="manilaPrsNo" style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
                             </div>
                             <div class="form-group" style="margin-bottom: 0;">
                                 <label style="font-size: 0.75rem;">PRS Date</label>
-                                <input type="text" id="manilaPrsDate" readonly style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
+                                <input type="text" id="manilaPrsDate" style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
                             </div>
                             <div class="form-group" style="margin-bottom: 0; grid-column: span 2;">
                                 <label style="font-size: 0.75rem;">Item/Particulars</label>
-                                <input type="text" id="manilaItem" readonly style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
+                                <input type="text" id="manilaItem" style="background: var(--bg-surface); font-size: 0.85rem; padding: 6px 10px;">
                             </div>
                         </div>
                     </div>
@@ -379,7 +385,7 @@
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                                 <div class="form-group">
                                     <label style="font-weight: 600; font-size: 0.85rem;">Target Date</label>
-                                    <input type="text" id="manilaTargetDate" readonly style="background: var(--bg-surface);">
+                                    <input type="text" id="manilaTargetDate" style="background: var(--bg-surface);">
                                 </div>
                                 <div class="form-group">
                                     <label style="font-weight: 600; font-size: 0.85rem;">Date Delivered</label>
