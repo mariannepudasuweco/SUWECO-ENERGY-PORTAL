@@ -5696,12 +5696,24 @@
                 manilaForm.addEventListener('submit', function(e) {
                     e.preventDefault();
                     
+                    const isStandalone = document.getElementById('manilaStandaloneToggle').checked;
+                    const prsIdValue = document.getElementById('manilaPrsSelect').value;
+                    const selectedPrsId = isStandalone ? null : (prsIdValue ? parseInt(prsIdValue, 10) : null);
+
                     if (editingManilaId) {
                         const recordIndex = manilaRecords.findIndex(r => r.id === editingManilaId);
                         if (recordIndex !== -1) {
                             manilaRecords[recordIndex] = {
                                 ...manilaRecords[recordIndex],
-                                prsId: parseInt(document.getElementById('manilaPrsSelect').value),
+                                prsId: selectedPrsId,
+                                process: document.getElementById('manilaProcess').value,
+                                purchase: document.getElementById('manilaPurchase').value,
+                                fund: document.getElementById('manilaFund').value,
+                                designation: document.getElementById('manilaDesignation').value,
+                                prsNo: document.getElementById('manilaPrsNo').value,
+                                prsDate: document.getElementById('manilaPrsDate').value,
+                                item: document.getElementById('manilaItem').value,
+                                targetDate: document.getElementById('manilaTargetDate').value,
                                 subtaskCharging: document.getElementById('manilaSubtaskCharging').value,
                                 workItemNo: document.getElementById('manilaWorkItemNo').value,
                                 poNo: document.getElementById('manilaPoNo').value,
@@ -5730,7 +5742,15 @@
                         const newRecord = {
                             id: Date.now(),
                             projectId: currentProjectId,
-                            prsId: parseInt(document.getElementById('manilaPrsSelect').value),
+                            prsId: selectedPrsId,
+                            process: document.getElementById('manilaProcess').value,
+                            purchase: document.getElementById('manilaPurchase').value,
+                            fund: document.getElementById('manilaFund').value,
+                            designation: document.getElementById('manilaDesignation').value,
+                            prsNo: document.getElementById('manilaPrsNo').value,
+                            prsDate: document.getElementById('manilaPrsDate').value,
+                            item: document.getElementById('manilaItem').value,
+                            targetDate: document.getElementById('manilaTargetDate').value,
                             subtaskCharging: document.getElementById('manilaSubtaskCharging').value,
                             workItemNo: document.getElementById('manilaWorkItemNo').value,
                             poNo: document.getElementById('manilaPoNo').value,
@@ -5756,6 +5776,7 @@
                         };
                         manilaRecords.push(newRecord);
                     }
+                    window.manilaRecords = manilaRecords;
                     
                     closeManilaModal();
                     if (currentView === 'manila') {
@@ -5819,8 +5840,8 @@
                 <div style="background: rgba(0, 82, 204, 0.05); border: 1px solid rgba(0, 82, 204, 0.2); border-radius: var(--radius-md); padding: 16px; margin-bottom: 24px; display: flex; gap: 12px;">
                     <div style="color: var(--primary);"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg></div>
                     <div>
-                        <div style="font-weight: 600; color: var(--primary); font-size: 0.9rem; margin-bottom: 4px;">Auto-Linked to PRS</div>
-                        <div style="font-size: 0.85rem; color: var(--text-muted);">Materials monitoring records are automatically created when a PRS with MNL-MNL or LCL-MNL process is added.</div>
+                        <div style="font-weight: 600; color: var(--primary); font-size: 0.9rem; margin-bottom: 4px;">Flexible Entry</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted);">Manila records can be linked to an existing MNL-MNL or LCL-MNL request, or created as standalone transactions.</div>
                     </div>
                 </div>
 
@@ -5947,10 +5968,10 @@
             if (searchTerm) {
                 records = records.filter(m => {
                     const prs = prsRecords.find(p => p.id === m.prsId);
-                    return (prs && prs.prsNo.toLowerCase().includes(searchTerm)) ||
-                           (prs && prs.description.toLowerCase().includes(searchTerm)) ||
-                           m.supplier.toLowerCase().includes(searchTerm) ||
-                           m.poNo.toLowerCase().includes(searchTerm);
+                    return ((prs?.prsNo || m.prsNo || '').toLowerCase().includes(searchTerm)) ||
+                           ((prs?.description || m.item || '').toLowerCase().includes(searchTerm)) ||
+                           (m.supplier || '').toLowerCase().includes(searchTerm) ||
+                           (m.poNo || '').toLowerCase().includes(searchTerm);
                 });
             }
             
@@ -5965,7 +5986,7 @@
             if (designationVal) {
                 records = records.filter(m => {
                     const prs = prsRecords.find(p => p.id === m.prsId);
-                    return prs && prs.designation === designationVal;
+                    return (prs?.designation || m.designation || '') === designationVal;
                 });
             }
 
@@ -6053,24 +6074,30 @@
 
             tbody.innerHTML = paginatedRecords.map(m => {
                 const prs = prsRecords.find(p => p.id === m.prsId) || {};
+                const process = prs.transaction || m.process || '-';
+                const designation = prs.designation || m.designation || '-';
+                const prsNo = prs.prsNo || m.prsNo || 'Standalone';
+                const item = prs.description || m.item || '-';
+                const prsDate = prs.prsDate || m.prsDate || '-';
+                const targetDate = prs.targetDate || m.targetDate || '-';
                 
                 let rowHtml = `<tr style="transition: background-color 0.2s;" onmouseover="this.style.backgroundColor='var(--bg-body)'" onmouseout="this.style.backgroundColor='transparent'">`;
                 
                 // Common columns
                 rowHtml += `
-                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); color: var(--primary); font-weight: 500;">${prs.transaction || '-'}</td>
-                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span style="background: var(--bg-body); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid var(--border-color);">${prs.designation || '-'}</span></td>
-                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); color: var(--primary); font-weight: 500;">${prs.prsNo || '-'}</td>
+                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); color: var(--primary); font-weight: 500;">${process}</td>
+                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span style="background: var(--bg-body); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; border: 1px solid var(--border-color);">${designation}</span></td>
+                    <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); color: var(--primary); font-weight: 500;">${prsNo}</td>
                 `;
 
                 if (currentManilaTab === 'procurement') {
                     rowHtml += `
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${prs.description || ''}">${prs.description || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${prs.prsDate || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${item}">${item}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${prsDate}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color); max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${m.subtaskCharging}">${m.subtaskCharging || '-'}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.poNo || '-'}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.supplier || '-'}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${prs.targetDate || '-'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${targetDate}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.dateDelivered || '-'}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${m.daysDelayed}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);"><span style="padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; background: ${m.procurementStatus === 'Delivered' ? 'rgba(16, 185, 129, 0.1)' : m.procurementStatus === 'ONGOING' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(245, 158, 11, 0.1)'}; color: ${m.procurementStatus === 'Delivered' ? 'var(--success)' : m.procurementStatus === 'ONGOING' ? 'var(--primary)' : 'var(--warning)'}; border: 1px solid ${m.procurementStatus === 'Delivered' ? 'rgba(16, 185, 129, 0.2)' : m.procurementStatus === 'ONGOING' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(245, 158, 11, 0.2)'};">${m.procurementStatus}</span></td>
@@ -6154,8 +6181,22 @@
                 if (id) {
                     const record = manilaRecords.find(r => r.id === id);
                     if (record) {
-                        document.getElementById('manilaPrsSelect').value = record.prsId;
-                        handleManilaPrsChange(); // Auto-fill PRS details
+                        document.getElementById('manilaStandaloneToggle').checked = !record.prsId;
+                        toggleManilaStandalone();
+
+                        if (record.prsId) {
+                            document.getElementById('manilaPrsSelect').value = record.prsId;
+                            handleManilaPrsChange(); // Auto-fill linked request details
+                        } else {
+                            document.getElementById('manilaProcess').value = record.process || 'MNL-MNL';
+                            document.getElementById('manilaPurchase').value = record.purchase || '';
+                            document.getElementById('manilaFund').value = record.fund || '';
+                            document.getElementById('manilaDesignation').value = record.designation || '';
+                            document.getElementById('manilaPrsNo').value = record.prsNo || '';
+                            document.getElementById('manilaPrsDate').value = record.prsDate || '';
+                            document.getElementById('manilaItem').value = record.item || '';
+                            document.getElementById('manilaTargetDate').value = record.targetDate || '';
+                        }
                         
                         document.getElementById('manilaSubtaskCharging').value = record.subtaskCharging;
                         document.getElementById('manilaWorkItemNo').value = record.workItemNo;
@@ -6181,8 +6222,10 @@
                     }
                 } else {
                     document.getElementById('manilaForm').reset();
+                    document.getElementById('manilaStandaloneToggle').checked = false;
+                    toggleManilaStandalone();
                     document.getElementById('manilaPaymentTermsPercent').value = 100;
-                    handleManilaPrsChange(); // Clear PRS details
+                    handleManilaPrsChange(); // Clear request details
                 }
             }
         };
@@ -6195,6 +6238,44 @@
                 if (modal) modal.classList.remove('active');
             }
             editingManilaId = null;
+        };
+
+        window.toggleManilaStandalone = function() {
+            const toggle = document.getElementById('manilaStandaloneToggle');
+            const prsGroup = document.getElementById('manilaPrsSelectGroup');
+            const prsSelect = document.getElementById('manilaPrsSelect');
+            if (!toggle || !prsGroup || !prsSelect) return;
+
+            const isStandalone = toggle.checked;
+            const editableIds = [
+                'manilaProcess', 'manilaPurchase', 'manilaFund', 'manilaDesignation',
+                'manilaPrsNo', 'manilaPrsDate', 'manilaItem', 'manilaTargetDate'
+            ];
+
+            prsGroup.style.display = isStandalone ? 'none' : 'block';
+            if (isStandalone) {
+                prsSelect.removeAttribute('required');
+                prsSelect.value = '';
+                editableIds.forEach(id => {
+                    const field = document.getElementById(id);
+                    if (field) {
+                        field.readOnly = false;
+                        field.style.background = 'var(--bg-body)';
+                    }
+                });
+                handleManilaPrsChange();
+                const processField = document.getElementById('manilaProcess');
+                if (processField && !processField.value) processField.value = 'MNL-MNL';
+            } else {
+                prsSelect.setAttribute('required', 'required');
+                editableIds.forEach(id => {
+                    const field = document.getElementById(id);
+                    if (field) {
+                        field.readOnly = true;
+                        field.style.background = 'var(--bg-surface)';
+                    }
+                });
+            }
         };
 
         window.handleManilaPrsChange = function() {
@@ -6220,7 +6301,8 @@
                     calculateManilaDaysDelayed();
                 }
             } else {
-                document.getElementById('manilaProcess').value = '';
+                const isStandalone = document.getElementById('manilaStandaloneToggle')?.checked;
+                document.getElementById('manilaProcess').value = isStandalone ? 'MNL-MNL' : '';
                 document.getElementById('manilaPurchase').value = '';
                 document.getElementById('manilaFund').value = '';
                 document.getElementById('manilaDesignation').value = '';
