@@ -315,7 +315,7 @@
                         </div>
                         <div id="manilaPrsSelectGroup" class="form-group" style="margin-bottom: 12px;">
                             <label style="font-weight: 600; font-size: 0.85rem;">Select Request / PRS</label>
-                            <select id="manilaPrsSelect" onchange="handleManilaPrsChange()" required>
+                            <select id="manilaPrsSelect" onchange="handleManilaPrsChange()">
                                 <option value="">Select existing PRS (MNL-MNL or LCL-MNL only)</option>
                             </select>
                         </div>
@@ -9430,13 +9430,22 @@ if (manilaForm && manilaForm.dataset.saveBound !== 'true') {
                 return;
             }
 
-            const selectedPrsId = document.getElementById('manilaPrsSelect')?.value || null;
-            const selectedPrs = (window.prsRecords || prsRecords || []).find(
-                p => String(p.id) === String(selectedPrsId)
+            const isStandalone = Boolean(
+                document.getElementById('manilaStandaloneToggle')?.checked
             );
+            const selectedPrsId = isStandalone
+                ? null
+                : (document.getElementById('manilaPrsSelect')?.value || null);
+            const selectedPrs = selectedPrsId
+                ? (window.prsRecords || prsRecords || []).find(
+                    p => String(p.id) === String(selectedPrsId)
+                )
+                : null;
 
-            if (!selectedPrsId && !manilaEditIdForAccess) {
-                window.showToast?.('Please select a PRS first.', 'error');
+            // A PRS is required only for records linked to the Request page.
+            // Standalone Manila entries must save with no request_id and no PRS number.
+            if (!isStandalone && !selectedPrsId) {
+                window.showToast?.('Please select a PRS or enable Standalone record.', 'error');
                 return;
             }
 
@@ -9449,7 +9458,7 @@ if (manilaForm && manilaForm.dataset.saveBound !== 'true') {
 
             const payload = {
                 project_id: String(projectId),
-                request_id: selectedPrsId || existingManilaForAccess?.prsId || null,
+                request_id: isStandalone ? null : (selectedPrsId || existingManilaForAccess?.prsId || null),
                 process: document.getElementById('manilaProcess')?.value || selectedPrs?.transaction || '',
                 designation: document.getElementById('manilaDesignation')?.value || selectedPrs?.designation || '',
                 prs_no: document.getElementById('manilaPrsNo')?.value || selectedPrs?.prsNo || '',
@@ -9578,7 +9587,7 @@ if (manilaForm && manilaForm.dataset.saveBound !== 'true') {
             const prsNo = document.getElementById('manilaPrsNo')?.value;
             const actualAmt = Number(document.getElementById('manilaActualAmount')?.value || 0);
 
-            if (typeof window.syncActualAmount === 'function') {
+            if (prsNo && typeof window.syncActualAmount === 'function') {
                 await window.syncActualAmount(prsNo, actualAmt);
             }
 
