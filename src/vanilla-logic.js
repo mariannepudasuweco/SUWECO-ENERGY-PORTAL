@@ -9355,3 +9355,131 @@ window.tdDropTask = function(event, newStatus) {
         }
     }
 };
+
+
+/* Preserve the current page position when records are added or edited in
+   the Procurement and Budget modules. */
+(function installModuleScrollPreserver() {
+    if (window.__moduleScrollPreserverInstalled) return;
+    window.__moduleScrollPreserverInstalled = true;
+
+    let restoreToken = 0;
+
+    function getActiveModule() {
+        const host = document.querySelector('#contentArea[data-active-module], #reactContainer[data-active-module]');
+        const dataModule = String(host?.dataset?.activeModule || '').toLowerCase();
+        if (dataModule) return dataModule;
+
+        // Legacy pages use the currentView variable instead of data-active-module.
+        try {
+            return String(currentView || '').toLowerCase();
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function isTargetModule() {
+        const moduleName = getActiveModule();
+        const targetViews = new Set([
+            'procurement-dashboard',
+            'request',
+            'manila',
+            'local',
+            'materials',
+            'fuel',
+            'boq',
+            'boq-charging',
+            'expense-overview',
+            'look-ahead'
+        ]);
+        return targetViews.has(moduleName) ||
+            moduleName.includes('procurement') ||
+            moduleName.includes('budget');
+    }
+
+    function capturePosition() {
+        const legacy = document.getElementById('contentArea');
+        const react = document.getElementById('reactContainer');
+        return {
+            windowX: window.scrollX,
+            windowY: window.scrollY,
+            legacyTop: legacy?.scrollTop ?? null,
+            legacyLeft: legacy?.scrollLeft ?? null,
+            reactTop: react?.scrollTop ?? null,
+            reactLeft: react?.scrollLeft ?? null
+        };
+    }
+
+    function applyPosition(position) {
+        if (!position) return;
+        const legacy = document.getElementById('contentArea');
+        const react = document.getElementById('reactContainer');
+
+        if (legacy && position.legacyTop !== null) {
+            legacy.scrollTop = position.legacyTop;
+            legacy.scrollLeft = position.legacyLeft || 0;
+        }
+        if (react && position.reactTop !== null) {
+            react.scrollTop = position.reactTop;
+            react.scrollLeft = position.reactLeft || 0;
+        }
+        window.scrollTo(position.windowX || 0, position.windowY || 0);
+    }
+
+    let pendingPosition = null;
+
+    window.preserveBudgetProcurementScroll = function preserveBudgetProcurementScroll() {
+        if (!isTargetModule()) return;
+        pendingPosition = capturePosition();
+        const position = pendingPosition;
+        const token = ++restoreToken;
+
+        // Re-apply after synchronous render, async Supabase reloads, and React/legacy rerenders.
+        [0, 16, 50, 100, 180, 300, 500, 800, 1200, 1800, 2600, 3600].forEach(delay => {
+            setTimeout(() => {
+                if (token !== restoreToken || !position) return;
+                requestAnimationFrame(() => applyPosition(position));
+            }, delay);
+        });
+    };
+
+    document.addEventListener('submit', function preserveOnModuleSubmit(event) {
+        if (!isTargetModule()) return;
+        if (!(event.target instanceof HTMLFormElement)) return;
+        window.preserveBudgetProcurementScroll();
+    }, true);
+
+    // Capture the table position before opening an edit form. This is more reliable
+    // than waiting for submit because some modal flows rerender before submitting.
+    document.addEventListener('click', function preserveBeforeEdit(event) {
+        if (!isTargetModule()) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        const button = target.closest('button, a');
+        if (!button) return;
+        const text = String(button.getAttribute('title') || button.getAttribute('aria-label') || button.textContent || '').toLowerCase();
+        const onclick = String(button.getAttribute('onclick') || '').toLowerCase();
+        if (text.includes('edit') || onclick.includes('edit')) {
+            pendingPosition = capturePosition();
+        }
+    }, true);
+
+    // Any content replacement after save/edit should return to the last captured row.
+    const observer = new MutationObserver(() => {
+        if (!pendingPosition || !isTargetModule()) return;
+        const position = pendingPosition;
+        requestAnimationFrame(() => applyPosition(position));
+    });
+
+    const startObserver = () => {
+        const legacy = document.getElementById('contentArea');
+        const react = document.getElementById('reactContainer');
+        if (legacy) observer.observe(legacy, { childList: true, subtree: false });
+        if (react) observer.observe(react, { childList: true, subtree: false });
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', startObserver, { once: true });
+    } else {
+        startObserver();
+    }
+})();
