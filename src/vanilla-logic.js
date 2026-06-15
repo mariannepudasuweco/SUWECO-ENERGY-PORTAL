@@ -2500,15 +2500,16 @@
             });
 
             // Calculate totals from Manila and Local records
-            const mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId);
+            const mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId).flatMap(r => typeof window.expandManilaPaymentTermRows === 'function' ? window.expandManilaPaymentTermRows(r) : [r]);
             const lclRecords = localRecords.filter(r => r.projectId === currentProjectId);
             const allRecords = [...mnlRecords, ...lclRecords];
 
             let totalActualExpense = 0;
             
             allRecords.forEach(record => {
-                if (!record.subtaskCharging) return;
-                const match = record.subtaskCharging.match(/^([A-D][0-9.]+)/);
+                const charging = record.subtaskCharging ?? record.subtask_charging ?? record.boqCharging ?? record.boq_charging ?? '';
+                if (!charging) return;
+                const match = String(charging).match(/^([A-D][0-9.]+)/);
                 if (match) {
                     const amount = parseFloat(record.actualAmount) || parseFloat(record.totalCost) || 0;
                     totalActualExpense += amount;
@@ -4712,7 +4713,99 @@
             doc.close();
         };
 
-        window.renderBoqChargingView = function() {
+        
+
+// Expand one Manila procurement transaction into individual payment-term rows.
+// This keeps Expense Overview, Budget Summary, and BOQ Charging consistent.
+window.expandManilaPaymentTermRows = function(record) {
+    const parseMoneyValue = (value) => {
+        if (value === null || value === undefined || value === '') return 0;
+        if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+        const parsed = Number(String(value).replace(/₱/g, '').replace(/,/g, '').trim());
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const normalizePercent = (value) => {
+        const parsed = Number(value || 0);
+        if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+        return parsed > 0 && parsed <= 1 ? parsed * 100 : parsed;
+    };
+
+    const formatPaymentMonth = (isoDate) => {
+        if (!isoDate) return '';
+        const date = new Date(`${isoDate}T00:00:00`);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }).replace(' ', ' - ');
+    };
+
+    const rawSelections = record?.paymentTermSelections ?? record?.payment_term_selections;
+    let selections = [];
+
+    if (typeof window.parseManilaPaymentTermSelections === 'function') {
+        selections = window.parseManilaPaymentTermSelections(
+            rawSelections,
+            record?.paymentTermsPercent ?? record?.termsPercent ?? record?.terms_percent ?? ''
+        );
+    } else if (Array.isArray(rawSelections)) {
+        selections = rawSelections;
+    }
+
+    selections = (selections || [])
+        .map((term, index) => ({
+            index,
+            percent: normalizePercent(term?.percent),
+            checked: Boolean(term?.checked),
+            paid_date: term?.paid_date || term?.paidDate || ''
+        }))
+        .filter(term => term.percent > 0);
+
+    // Older rows without structured payment terms keep the existing logic.
+    if (!selections.length) return [{ ...record, __paymentTermExpanded: false }];
+
+    // In the Manila form, Total Cost is the full transaction basis while
+    // actual_amount is the sum of checked terms. Use the full basis here so a
+    // 30/40/30 transaction becomes three correct amounts instead of applying
+    // the percentages again to an already partial paid amount.
+    const fullTransactionAmount = parseMoneyValue(
+        record?.totalCost ??
+        record?.total_cost ??
+        record?.netOfVat ??
+        record?.net_of_vat ??
+        record?.actualAmount ??
+        record?.actual_amount
+    );
+
+    return selections.map(term => {
+        const termAmount = Number((fullTransactionAmount * (term.percent / 100)).toFixed(2));
+        const paidMonth = term.checked ? formatPaymentMonth(term.paid_date) : '';
+        const termLabel = `${Number(term.percent.toFixed(4))}%`;
+
+        return {
+            ...record,
+            id: `${record?.id ?? 'manila'}-term-${term.index}`,
+            sourceRecordId: record?.id,
+            __paymentTermExpanded: true,
+            __paymentTermIndex: term.index,
+            __paymentTermPercent: term.percent,
+            __paymentTermChecked: term.checked,
+            actualAmount: termAmount,
+            actual_amount: termAmount,
+            paymentStatus: term.checked ? 'Paid' : 'Unpaid',
+            payment_status: term.checked ? 'Paid' : 'Unpaid',
+            paymentReleased: term.checked ? term.paid_date : '',
+            payment_released: term.checked ? term.paid_date : '',
+            paymentMonth: paidMonth,
+            payment_month: paidMonth,
+            month: paidMonth,
+            paymentTerms: termLabel,
+            payment_terms: termLabel,
+            termsPercent: term.percent,
+            terms_percent: term.percent
+        };
+    });
+};
+
+window.renderBoqChargingView = function() {
             if (!currentProjectId) return;
             currentView = 'boq-charging';
             updateSubNavVisibility();
@@ -4723,22 +4816,25 @@
             const projectBudgets = boqBudgets[currentProjectId];
 
             // Calculate totals from Manila and Local records
-            const mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId);
+            const mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId).flatMap(r => typeof window.expandManilaPaymentTermRows === 'function' ? window.expandManilaPaymentTermRows(r) : [r]);
             const lclRecords = localRecords.filter(r => r.projectId === currentProjectId);
             const allRecords = [...mnlRecords, ...lclRecords];
 
             const totalsByCode = {};
             
             allRecords.forEach(record => {
-                if (!record.subtaskCharging) return;
-                const match = record.subtaskCharging.match(/^([A-D][0-9.]+)/);
+                const charging = record.subtaskCharging ?? record.subtask_charging ?? record.boqCharging ?? record.boq_charging ?? '';
+                if (!charging) return;
+                const match = String(charging).match(/^([A-D][0-9.]+)/);
                 if (match) {
                     const code = match[1];
                     if (!totalsByCode[code]) {
                         totalsByCode[code] = { paid: 0, unpaid: 0 };
                     }
-                    const amount = parseFloat(record.actualAmount) || parseFloat(record.totalCost) || 0;
-                    if (record.paymentStatus === 'Paid') {
+                    const rawAmount = record.actualAmount ?? record.actual_amount ?? record.totalCost ?? record.total_cost ?? 0;
+                    const amount = Number.parseFloat(rawAmount) || 0;
+                    const status = record.paymentStatus ?? record.payment_status ?? 'Unpaid';
+                    if (status === 'Paid') {
                         totalsByCode[code].paid += amount;
                     } else {
                         totalsByCode[code].unpaid += amount;
@@ -8216,7 +8312,13 @@
                 });
             };
             
-            processRecords(manilaRecords);
+            const expandedManilaRecords = manilaRecords
+                .filter(r => r.projectId === currentProjectId)
+                .flatMap(r => typeof window.expandManilaPaymentTermRows === 'function'
+                    ? window.expandManilaPaymentTermRows(r)
+                    : [r]);
+
+            processRecords(expandedManilaRecords);
             processRecords(localRecords);
             
             const sortedMonths = Array.from(months).sort((a, b) => {
@@ -8254,7 +8356,7 @@
                 }
             };
             
-            let mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId);
+            let mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId).flatMap(r => typeof window.expandManilaPaymentTermRows === 'function' ? window.expandManilaPaymentTermRows(r) : [r]);
             let lclRecords = localRecords.filter(r => r.projectId === currentProjectId);
             
             if (filterMonth !== 'all') {
@@ -8267,8 +8369,10 @@
             
             const processTotals = (records) => {
                 records.forEach(r => {
-                    const amount = parseFloat(r.totalCost) || 0;
-                    if (r.paymentStatus === 'Paid') {
+                    const rawAmount = r.actualAmount ?? r.actual_amount ?? r.totalCost ?? r.total_cost ?? 0;
+                    const amount = Number.parseFloat(rawAmount) || 0;
+                    const status = r.paymentStatus ?? r.payment_status ?? 'Unpaid';
+                    if (status === 'Paid') {
                         totalPaid += amount;
                     } else {
                         totalUnpaid += amount;
@@ -8295,8 +8399,10 @@
                     records.forEach(r => {
                         const month = r.paymentMonth || 'Unspecified';
                         if (!monthTotals[month]) monthTotals[month] = { paid: 0, unpaid: 0 };
-                        const amount = parseFloat(r.totalCost) || 0;
-                        if (r.paymentStatus === 'Paid') {
+                        const rawAmount = r.actualAmount ?? r.actual_amount ?? r.totalCost ?? r.total_cost ?? 0;
+                        const amount = Number.parseFloat(rawAmount) || 0;
+                        const status = r.paymentStatus ?? r.payment_status ?? 'Unpaid';
+                        if (status === 'Paid') {
                             monthTotals[month].paid += amount;
                         } else {
                             monthTotals[month].unpaid += amount;
@@ -8307,7 +8413,32 @@
                 processMonthTotals(mnlRecords);
                 processMonthTotals(lclRecords);
                 
-                Object.keys(monthTotals).forEach(month => {
+                const monthNames = [
+                    'January', 'February', 'March', 'April', 'May', 'June',
+                    'July', 'August', 'September', 'October', 'November', 'December'
+                ];
+
+                const getMonthYearTimestamp = (value) => {
+                    const label = String(value || '').trim();
+                    if (!label || label.toLowerCase() === 'unspecified') return Number.POSITIVE_INFINITY;
+
+                    const match = label.match(/^([A-Za-z]+)\s*-\s*(\d{4})$/);
+                    if (!match) return Number.POSITIVE_INFINITY - 1;
+
+                    const monthIndex = monthNames.findIndex(
+                        month => month.toLowerCase() === match[1].toLowerCase()
+                    );
+                    if (monthIndex < 0) return Number.POSITIVE_INFINITY - 1;
+
+                    return new Date(Number(match[2]), monthIndex, 1).getTime();
+                };
+
+                const sortedMonths = Object.keys(monthTotals).sort((a, b) => {
+                    const difference = getMonthYearTimestamp(a) - getMonthYearTimestamp(b);
+                    return difference !== 0 ? difference : String(a).localeCompare(String(b));
+                });
+
+                sortedMonths.forEach(month => {
                     const data = monthTotals[month];
                     const total = data.paid + data.unpaid;
                     summaryHtml += `
