@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import {
   FileText,
   RefreshCw,
@@ -81,8 +83,257 @@ const isValidEmail = (email: string) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 };
 
+
+const sanitizePdfFilename = (value: string) => {
+  const cleaned = String(value || "generated-report")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/\.+$/g, "");
+
+  return cleaned || "generated-report";
+};
+
+const waitForImages = async (root: ParentNode): Promise<void> => {
+  const images = Array.from(root.querySelectorAll("img"));
+
+  if (images.length === 0) return;
+
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) {
+            resolve();
+            return;
+          }
+
+          const finish = () => resolve();
+
+          image.addEventListener("load", finish, { once: true });
+          image.addEventListener("error", finish, { once: true });
+
+          window.setTimeout(finish, 5000);
+        })
+    )
+  );
+};
+
+const blobToBase64 = (blob: Blob): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onloadend = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("Unable to convert the generated PDF."));
+        return;
+      }
+
+      const base64 = reader.result.split(",")[1];
+
+      if (!base64) {
+        reject(new Error("The generated PDF attachment is empty."));
+        return;
+      }
+
+      resolve(base64);
+    };
+
+    reader.onerror = () => {
+      reject(reader.error || new Error("Unable to read the generated PDF."));
+    };
+
+    reader.readAsDataURL(blob);
+  });
+};
+
+const convertReportHtmlToPdfBase64 = async (
+  reportHtml: string,
+  reportTitle: string
+): Promise<{
+  filename: string;
+  pdfBase64: string;
+}> => {
+  if (!reportHtml.trim()) {
+    throw new Error(`"${reportTitle}" does not contain report content.`);
+  }
+
+  const iframe = document.createElement("iframe");
+
+  iframe.setAttribute("aria-hidden", "true");
+
+  Object.assign(iframe.style, {
+    position: "fixed",
+    left: "-100000px",
+    top: "0",
+    width: "1123px",
+    height: "794px",
+    border: "0",
+    visibility: "hidden",
+    pointerEvents: "none",
+    background: "#ffffff",
+  });
+
+  document.body.appendChild(iframe);
+
+  try {
+    const iframeDocument =
+      iframe.contentDocument || iframe.contentWindow?.document;
+
+    if (!iframeDocument) {
+      throw new Error(`Unable to prepare "${reportTitle}" for PDF generation.`);
+    }
+
+    iframeDocument.open();
+    iframeDocument.write(reportHtml);
+    iframeDocument.close();
+
+    await new Promise<void>((resolve) => {
+      const finish = () => resolve();
+
+      if (
+        iframeDocument.readyState === "complete" ||
+        iframeDocument.readyState === "interactive"
+      ) {
+        window.setTimeout(finish, 500);
+        return;
+      }
+
+      iframe.addEventListener("load", finish, { once: true });
+      window.setTimeout(finish, 2000);
+    });
+
+    await waitForImages(iframeDocument);
+
+    const reportElement =
+      iframeDocument.querySelector<HTMLElement>(".report-document") ||
+      iframeDocument.body;
+
+    if (!reportElement) {
+      throw new Error(
+        `Unable to find printable content for "${reportTitle}".`
+      );
+    }
+
+    const contentWidth = Math.max(reportElement.scrollWidth, 1123);
+    const contentHeight = Math.max(reportElement.scrollHeight, 794);
+
+    iframe.style.width = `${contentWidth}px`;
+    iframe.style.height = `${contentHeight}px`;
+
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
+
+    const canvas = await html2canvas(reportElement, {
+      backgroundColor: "#ffffff",
+      scale: 1.5,
+      useCORS: true,
+      allowTaint: false,
+      logging: false,
+      windowWidth: contentWidth,
+      windowHeight: contentHeight,
+    });
+
+    if (!canvas.width || !canvas.height) {
+      throw new Error(`The generated PDF for "${reportTitle}" is empty.`);
+    }
+
+    const pdf = new jsPDF({
+      orientation: "landscape",
+      unit: "mm",
+      format: "a4",
+      compress: true,
+    });
+
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 8;
+    const usableWidth = pageWidth - margin * 2;
+    const usableHeight = pageHeight - margin * 2;
+    const sourcePageHeightPixels =
+      canvas.width * (usableHeight / usableWidth);
+
+    let sourceY = 0;
+    let pageIndex = 0;
+
+    while (sourceY < canvas.height) {
+      const sliceHeight = Math.min(
+        sourcePageHeightPixels,
+        canvas.height - sourceY
+      );
+
+      const pageCanvas = document.createElement("canvas");
+      pageCanvas.width = canvas.width;
+      pageCanvas.height = Math.ceil(sliceHeight);
+
+      const pageContext = pageCanvas.getContext("2d");
+
+      if (!pageContext) {
+        throw new Error(
+          `Unable to create a PDF page for "${reportTitle}".`
+        );
+      }
+
+      pageContext.fillStyle = "#ffffff";
+      pageContext.fillRect(
+        0,
+        0,
+        pageCanvas.width,
+        pageCanvas.height
+      );
+
+      pageContext.drawImage(
+        canvas,
+        0,
+        sourceY,
+        canvas.width,
+        sliceHeight,
+        0,
+        0,
+        pageCanvas.width,
+        pageCanvas.height
+      );
+
+      const imageData = pageCanvas.toDataURL("image/jpeg", 0.92);
+      const renderedHeight =
+        usableWidth * (pageCanvas.height / pageCanvas.width);
+
+      if (pageIndex > 0) {
+        pdf.addPage("a4", "landscape");
+      }
+
+      pdf.addImage(
+        imageData,
+        "JPEG",
+        margin,
+        margin,
+        usableWidth,
+        Math.min(renderedHeight, usableHeight),
+        undefined,
+        "FAST"
+      );
+
+      sourceY += sliceHeight;
+      pageIndex += 1;
+    }
+
+    const pdfBlob = pdf.output("blob");
+    const pdfBase64 = await blobToBase64(pdfBlob);
+
+    return {
+      filename: `${sanitizePdfFilename(reportTitle)}.pdf`,
+      pdfBase64,
+    };
+  } finally {
+    iframe.remove();
+  }
+};
+
 export default function ReportsNotificationsPage() {
-  const { user, hasPermission, canDeleteRow, canEditRow } = useAccess();
+  const { user, canDeleteRow, canEditRow } = useAccess();
   const [reports, setReports] = useState<GeneratedReport[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedReportIds, setSelectedReportIds] = useState<string[]>([]);
@@ -598,74 +849,136 @@ const mergedTitle =
   };
 
   const sendSelectedReports = async () => {
-    if (selectedReports.length === 0) {
-      alert("Please select reports first.");
-      return;
+  if (selectedReports.length === 0) {
+    alert("Please select reports first.");
+    return;
+  }
+
+  if (recipients.length === 0) {
+    alert("Please add at least one recipient email.");
+    return;
+  }
+
+  const invalidRecipients = recipients.filter(
+    (recipient) => !isValidEmail(recipient)
+  );
+
+  if (invalidRecipients.length > 0) {
+    alert(
+      `Please correct these invalid email addresses:\n\n${invalidRecipients.join(
+        "\n"
+      )}`
+    );
+    return;
+  }
+
+  const reportsWithHtml = selectedReports.filter(
+    (report) =>
+      typeof report.report_html === "string" &&
+      report.report_html.trim().length > 0
+  );
+
+  if (reportsWithHtml.length === 0) {
+    alert("Selected reports do not have saved HTML content.");
+    return;
+  }
+
+  setIsSending(true);
+
+  try {
+    const preparedReports = [];
+
+    for (const report of reportsWithHtml) {
+      const reportTitle =
+        report.report_title || "Generated Report";
+
+      const generatedPdf =
+        await convertReportHtmlToPdfBase64(
+          report.report_html || "",
+          reportTitle
+        );
+
+      preparedReports.push({
+        id: report.id,
+        title: reportTitle,
+        projectName: report.project_name,
+        moduleName: report.module_name,
+        pageName: report.page_name,
+        scope: report.report_scope,
+        generatedAt: report.generated_at,
+
+        // These two fields are required by the email API.
+        filename: generatedPdf.filename,
+        pdfBase64: generatedPdf.pdfBase64,
+      });
     }
 
-    if (recipients.length === 0) {
-      alert("Please add at least one recipient email.");
-      return;
-    }
-
-    const reportsWithHtml = selectedReports.filter(
-      (report) => report.report_html
+    console.log(
+      "[Reports] Prepared PDF attachments:",
+      preparedReports.map((report) => ({
+        filename: report.filename,
+        base64Length: report.pdfBase64?.length || 0,
+      }))
     );
 
-    if (reportsWithHtml.length === 0) {
-      alert("Selected reports do not have saved HTML content.");
-      return;
-    }
-
-    setIsSending(true);
-
-    try {
-      const response = await fetch("/api/send-generated-reports", {
+    const response = await fetch(
+      "/api/send-generated-reports",
+      {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
           recipients,
-          reports: reportsWithHtml.map((report) => ({
-            id: report.id,
-            title: report.report_title,
-            projectName: report.project_name,
-            moduleName: report.module_name,
-            pageName: report.page_name,
-            scope: report.report_scope,
-            generatedAt: report.generated_at,
-            html: report.report_html,
-          })),
+          reports: preparedReports,
         }),
-      });
-
-      const result = await response.json();
-
-      setIsSending(false);
-
-      if (!response.ok) {
-        console.error("[Reports] Send email error:", result);
-        alert(
-          `Failed to send email.\n\n${
-            result?.error?.message || result?.error || "Unknown error"
-          }`
-        );
-        return;
       }
+    );
 
-      console.log("[Reports] Email sent:", result);
-      alert("Selected reports sent successfully.");
-    } catch (error) {
-      setIsSending(false);
-      console.error("[Reports] Send email request failed:", error);
-      alert(
-        `Failed to send email.\n\n${
-          error instanceof Error ? error.message : String(error)
-        }`
+    const result = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.error("[Reports] Send email error:", result);
+
+      const apiError =
+        result?.error?.message ||
+        result?.error ||
+        "Unknown email error.";
+
+      throw new Error(
+        typeof apiError === "string"
+          ? apiError
+          : JSON.stringify(apiError)
       );
     }
-  };
+
+    console.log(
+      "[Reports] Email sent with attachments:",
+      result
+    );
+
+    alert(
+      `${result?.attachmentCount || preparedReports.length} PDF attachment${
+        preparedReports.length === 1 ? "" : "s"
+      } sent successfully.`
+    );
+  } catch (error) {
+    console.error(
+      "[Reports] Send email request failed:",
+      error
+    );
+
+    alert(
+      `Failed to send email.\n\n${
+        error instanceof Error
+          ? error.message
+          : String(error)
+      }`
+    );
+  } finally {
+    setIsSending(false);
+  }
+};
 
   return (
     <PageContainer
