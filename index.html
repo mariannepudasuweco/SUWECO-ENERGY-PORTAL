@@ -14204,20 +14204,33 @@ window.materialsGetTransactionType = function(transaction) {
 };
 
 window.filterMaterialsMasterlistTable = function() {
-    const searchValue = window.materialsNormalizeText(document.getElementById('materialsMasterlistSearch')?.value || '');
-    const departmentFilter = window.materialsSafeValue(document.getElementById('materialsMasterlistDepartmentFilter')?.value || '');
-    const typeFilter = window.materialsSafeValue(document.getElementById('materialsMasterlistTypeFilter')?.value || '');
-    const table = document.getElementById('materialsMasterlistTable');
-    if (!table) return;
+    window.__materialsMasterlistSearch = document.getElementById('materialsMasterlistSearch')?.value || '';
+    window.__materialsMasterlistDepartmentFilter = document.getElementById('materialsMasterlistDepartmentFilter')?.value || '';
+    window.__materialsMasterlistTypeFilter = document.getElementById('materialsMasterlistTypeFilter')?.value || '';
+    window.__materialsMasterlistPage = 1;
+    window.renderMaterialsView();
 
-    table.querySelectorAll('tbody tr').forEach(row => {
-        const rowText = window.materialsNormalizeText(row.textContent);
-        const rowDepartment = window.materialsSafeValue(row.dataset.department);
-        const rowType = window.materialsSafeValue(row.dataset.type);
-        const matchesSearch = !searchValue || rowText.includes(searchValue);
-        const matchesDepartment = !departmentFilter || rowDepartment === departmentFilter;
-        const matchesType = !typeFilter || rowType === typeFilter;
-        row.style.display = matchesSearch && matchesDepartment && matchesType ? '' : 'none';
+    requestAnimationFrame(() => {
+        const input = document.getElementById('materialsMasterlistSearch');
+        if (input) {
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+        }
+    });
+};
+
+window.filterMaterialsTransactionsTable = function() {
+    window.__materialsTransactionSearch = document.getElementById('materialsTransactionSearch')?.value || '';
+    window.__materialsTransactionTypeFilter = document.getElementById('materialsTransactionTypeFilter')?.value || '';
+    window.__materialsTransactionsPage = 1;
+    window.renderMaterialsView();
+
+    requestAnimationFrame(() => {
+        const input = document.getElementById('materialsTransactionSearch');
+        if (input) {
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+        }
     });
 };
 
@@ -14246,8 +14259,74 @@ window.renderMaterialsView = function() {
     if (typeof updateSubNavVisibility === 'function') updateSubNavVisibility();
 
     const safe = window.materialsSafeValue;
-    const masterlistRows = window.materialsMasterlist || materialsMasterlist || [];
-    const transactionRows = window.materialsTransactions || materialsTransactions || [];
+    const sourceMasterlistRows = window.materialsMasterlist || materialsMasterlist || [];
+    const sourceTransactionRows = window.materialsTransactions || materialsTransactions || [];
+
+    window.__materialsMasterlistSearch = window.__materialsMasterlistSearch || '';
+    window.__materialsMasterlistDepartmentFilter = window.__materialsMasterlistDepartmentFilter || '';
+    window.__materialsMasterlistTypeFilter = window.__materialsMasterlistTypeFilter || '';
+    window.__materialsTransactionSearch = window.__materialsTransactionSearch || '';
+    window.__materialsTransactionTypeFilter = window.__materialsTransactionTypeFilter || '';
+
+    const masterSearch = window.materialsNormalizeText(window.__materialsMasterlistSearch);
+    const masterDepartment = window.materialsSafeValue(window.__materialsMasterlistDepartmentFilter);
+    const masterType = window.materialsSafeValue(window.__materialsMasterlistTypeFilter);
+
+    const allMasterlistRows = sourceMasterlistRows.filter(material => {
+        const department = window.materialsNormalizeDepartment(material.department || material.department_name);
+        const type = window.materialsNormalizeType(material.type || material.materialType || material.material_type);
+        const searchableText = window.materialsNormalizeText([
+            material.itemCode, material.item_code, material.materialCode, material.material_code,
+            material.itemName, material.item_name, material.materialName, material.material_name,
+            department, type, material.unit, material.currentStock, material.current_stock,
+            material.minStock, material.min_stock, material.status
+        ].join(' '));
+
+        return (!masterSearch || searchableText.includes(masterSearch)) &&
+            (!masterDepartment || department === masterDepartment) &&
+            (!masterType || type === masterType);
+    });
+
+    const transactionSearch = window.materialsNormalizeText(window.__materialsTransactionSearch);
+    const transactionTypeFilter = window.materialsNormalizeType(window.__materialsTransactionTypeFilter);
+
+    const allTransactionRows = sourceTransactionRows.filter(transaction => {
+        const material = window.materialsGetTransactionMaterial(transaction);
+        const materialType = window.materialsNormalizeType(
+            material?.type || material?.materialType || material?.material_type ||
+            transaction.materialType || transaction.material_type
+        );
+        const searchableText = window.materialsNormalizeText([
+            transaction.date, transaction.time, transaction.mrsNo, transaction.mrs_no,
+            transaction.poQty, transaction.po_qty, transaction.poNo, transaction.po_no,
+            transaction.prsNo, transaction.prs_no, transaction.charging,
+            transaction.actualCharging, transaction.actual_charging,
+            transaction.itemCode, transaction.item_code, transaction.itemName, transaction.item_name,
+            transaction.quantity, transaction.transactionType, transaction.transaction_type,
+            transaction.accountabilityNo, transaction.accountability_no,
+            materialType, transaction.remarks
+        ].join(' '));
+
+        return (!transactionSearch || searchableText.includes(transactionSearch)) &&
+            (!transactionTypeFilter || materialType === transactionTypeFilter);
+    });
+
+    window.__materialsPageSize = window.__materialsPageSize || 50;
+    window.__materialsMasterlistPage = Math.max(1, window.__materialsMasterlistPage || 1);
+    window.__materialsTransactionsPage = Math.max(1, window.__materialsTransactionsPage || 1);
+    const pageSize = window.__materialsPageSize;
+    const masterlistTotalPages = Math.max(1, Math.ceil(allMasterlistRows.length / pageSize));
+    const transactionsTotalPages = Math.max(1, Math.ceil(allTransactionRows.length / pageSize));
+    window.__materialsMasterlistPage = Math.min(window.__materialsMasterlistPage, masterlistTotalPages);
+    window.__materialsTransactionsPage = Math.min(window.__materialsTransactionsPage, transactionsTotalPages);
+    const masterlistStart = (window.__materialsMasterlistPage - 1) * pageSize;
+    const transactionsStart = (window.__materialsTransactionsPage - 1) * pageSize;
+    const masterlistRows = currentMaterialsTab === 'masterlist'
+        ? allMasterlistRows.slice(masterlistStart, masterlistStart + pageSize)
+        : sourceMasterlistRows;
+    const transactionRows = currentMaterialsTab === 'transactions'
+        ? allTransactionRows.slice(transactionsStart, transactionsStart + pageSize)
+        : sourceTransactionRows;
     let contentHtml = '';
 
     if (currentMaterialsTab === 'dashboard') {
@@ -14355,13 +14434,13 @@ window.renderMaterialsView = function() {
             <div class="card" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
                 <div style="flex: 1; position: relative;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                    <input id="materialsMasterlistSearch" type="text" placeholder="Search code, name, department, type..." oninput="filterMaterialsMasterlistTable()" style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;">
+                    <input id="materialsMasterlistSearch" type="text" value="${safe(window.__materialsMasterlistSearch, '')}" placeholder="Search code, name, department, type..." oninput="filterMaterialsMasterlistTable()" style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;">
                 </div>
                 <select id="materialsMasterlistDepartmentFilter" class="form-control" onchange="filterMaterialsMasterlistTable()" style="width: auto;">
-                    <option value="">All Departments</option><option value="Civil">Civil</option><option value="Electrical">Electrical</option><option value="Mechanical">Mechanical</option><option value="SCADA">SCADA</option>
+                    <option value="" ${!window.__materialsMasterlistDepartmentFilter ? 'selected' : ''}>All Departments</option><option value="Civil" ${window.__materialsMasterlistDepartmentFilter === 'Civil' ? 'selected' : ''}>Civil</option><option value="Electrical" ${window.__materialsMasterlistDepartmentFilter === 'Electrical' ? 'selected' : ''}>Electrical</option><option value="Mechanical" ${window.__materialsMasterlistDepartmentFilter === 'Mechanical' ? 'selected' : ''}>Mechanical</option><option value="SCADA" ${window.__materialsMasterlistDepartmentFilter === 'SCADA' ? 'selected' : ''}>SCADA</option>
                 </select>
                 <select id="materialsMasterlistTypeFilter" class="form-control" onchange="filterMaterialsMasterlistTable()" style="width: auto;">
-                    <option value="">All Types</option><option value="Consumable">Consumable</option><option value="Non-Consumable">Non-Consumable</option>
+                    <option value="" ${!window.__materialsMasterlistTypeFilter ? 'selected' : ''}>All Types</option><option value="Consumable" ${window.__materialsMasterlistTypeFilter === 'Consumable' ? 'selected' : ''}>Consumable</option><option value="Non-Consumable" ${window.__materialsMasterlistTypeFilter === 'Non-Consumable' ? 'selected' : ''}>Non-Consumable</option>
                 </select>
                 <button class="btn btn-primary" onclick="openNewMaterialModal()">+ New Material</button>
             </div>
@@ -14372,6 +14451,14 @@ window.renderMaterialsView = function() {
                     </thead>
                     <tbody>${tableRows}</tbody>
                 </table>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; padding:12px 16px; background:var(--bg-surface); border:1px solid var(--border-color); border-radius:var(--radius-md);">
+                <span style="font-size:0.85rem; color:var(--text-muted);">Showing ${allMasterlistRows.length ? masterlistStart + 1 : 0}-${Math.min(masterlistStart + pageSize, allMasterlistRows.length)} of ${allMasterlistRows.length}</span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <button class="btn btn-secondary" ${window.__materialsMasterlistPage <= 1 ? 'disabled' : ''} onclick="window.__materialsMasterlistPage=Math.max(1,window.__materialsMasterlistPage-1);renderMaterialsView();">Previous</button>
+                    <span style="font-size:0.85rem; font-weight:600;">Page ${window.__materialsMasterlistPage} of ${masterlistTotalPages}</span>
+                    <button class="btn btn-secondary" ${window.__materialsMasterlistPage >= masterlistTotalPages ? 'disabled' : ''} onclick="window.__materialsMasterlistPage=Math.min(${masterlistTotalPages},window.__materialsMasterlistPage+1);renderMaterialsView();">Next</button>
+                </div>
             </div>
         `;
     } else if (currentMaterialsTab === 'transactions') {
@@ -14396,11 +14483,19 @@ window.renderMaterialsView = function() {
 
         contentHtml = `
             <div class="card" style="margin-bottom: 16px; display: flex; gap: 12px; align-items: center;">
-                <div style="flex: 1; position: relative;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><input id="materialsTransactionSearch" type="text" placeholder="Search item, item code, PO no, PRS no..." oninput="filterMaterialsTransactionsTable()" style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;"></div>
-                <select id="materialsTransactionTypeFilter" class="form-control" onchange="filterMaterialsTransactionsTable()" style="width: auto;"><option value="">All Types</option><option value="Consumable">Consumable</option><option value="Non-Consumable">Non-Consumable</option></select>
+                <div style="flex: 1; position: relative;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><input id="materialsTransactionSearch" type="text" value="${safe(window.__materialsTransactionSearch, '')}" placeholder="Search item, item code, PO no, PRS no..." oninput="filterMaterialsTransactionsTable()" style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem;"></div>
+                <select id="materialsTransactionTypeFilter" class="form-control" onchange="filterMaterialsTransactionsTable()" style="width: auto;"><option value="" ${!window.__materialsTransactionTypeFilter ? 'selected' : ''}>All Types</option><option value="Consumable" ${window.__materialsTransactionTypeFilter === 'Consumable' ? 'selected' : ''}>Consumable</option><option value="Non-Consumable" ${window.__materialsTransactionTypeFilter === 'Non-Consumable' ? 'selected' : ''}>Non-Consumable</option></select>
                 <button class="btn btn-primary" onclick="openNewTransactionModal()">+ New Transaction</button>
             </div>
             <div class="card" style="padding: 0; overflow-x: auto;"><table id="materialsTransactionsTable" style="width: 100%; border-collapse: collapse; text-align: left;"><thead style="background: var(--bg-body); border-bottom: 1px solid var(--border-color);"><tr><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Date</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Time</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">MRS/Withdrawal No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PO Qty</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PO No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">PRS No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Charging</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Actual Charging</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Code</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Item Name</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Quantity</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Transaction Type</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Accountability No.</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Type</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted);">Remarks</th><th style="padding: 16px; font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-align: right;">Actions</th></tr></thead><tbody>${tableRows}</tbody></table></div>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; padding:12px 16px; background:var(--bg-surface); border:1px solid var(--border-color); border-radius:var(--radius-md);">
+                <span style="font-size:0.85rem; color:var(--text-muted);">Showing ${allTransactionRows.length ? transactionsStart + 1 : 0}-${Math.min(transactionsStart + pageSize, allTransactionRows.length)} of ${allTransactionRows.length}</span>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <button class="btn btn-secondary" ${window.__materialsTransactionsPage <= 1 ? 'disabled' : ''} onclick="window.__materialsTransactionsPage=Math.max(1,window.__materialsTransactionsPage-1);renderMaterialsView();">Previous</button>
+                    <span style="font-size:0.85rem; font-weight:600;">Page ${window.__materialsTransactionsPage} of ${transactionsTotalPages}</span>
+                    <button class="btn btn-secondary" ${window.__materialsTransactionsPage >= transactionsTotalPages ? 'disabled' : ''} onclick="window.__materialsTransactionsPage=Math.min(${transactionsTotalPages},window.__materialsTransactionsPage+1);renderMaterialsView();">Next</button>
+                </div>
+            </div>
         `;
     }
 
@@ -15455,39 +15550,18 @@ document.addEventListener('fullscreenchange', () => {
         window.renderMaterialsView = function patchedRenderMaterialsView() {
             oldRenderMaterialsView.apply(this, arguments);
 
-            // After the existing render creates rows, repair blank cells and data filters using linked records.
+            // IMPORTANT: Do not remap rendered rows by array index here.
+            // Search and pagination render a filtered/sliced dataset, so index 0 in the table
+            // is not necessarily index 0 in the full masterlist/transactions arrays.
+            // The main renderer already outputs the correct record values.
             setTimeout(() => {
-                const masterTable = document.getElementById('materialsMasterlistTable');
-                if (masterTable) {
-                    masterTable.querySelectorAll('tbody tr').forEach((row, index) => {
-                        const material = getMasterlist()[index];
-                        if (!material || row.children.length < 9) return;
-                        const department = normDepartment(material.department);
-                        const type = normType(material.type);
-                        row.dataset.department = department;
-                        row.dataset.type = type;
-                        row.children[0].textContent = clean(material.itemCode, '-');
-                        row.children[1].textContent = clean(material.itemName, '-');
-                        row.children[2].textContent = clean(department, '-');
-                        row.children[3].textContent = clean(type, '-');
-                    });
-                }
-
                 const txTable = document.getElementById('materialsTransactionsTable');
                 if (txTable) {
-                    txTable.querySelectorAll('tbody tr').forEach((row, index) => {
-                        const tx = getTransactions()[index];
-                        if (!tx || row.children.length < 16) return;
-                        const material = window.materialsGetTransactionMaterial(tx);
-                        const itemCode = clean(tx.itemCode || material?.itemCode, '-');
-                        const itemName = clean(tx.itemName || material?.itemName, '-');
-                        const department = normDepartment(material?.department || tx.department || tx.actualCharging || tx.actual_charging || tx.charging);
-                        const type = normType(material?.type || material?.material_type || tx.materialType || tx.material_type);
-                        row.dataset.department = department;
-                        row.dataset.type = type;
-                        row.children[8].textContent = itemCode;
-                        row.children[9].textContent = itemName;
-                        row.children[13].textContent = clean(type, '-');
+                    txTable.querySelectorAll('tbody tr').forEach((row) => {
+                        // Keep the values produced by the filtered/paginated renderer.
+                        // Only normalize existing data attributes without replacing cell contents.
+                        row.dataset.department = normDepartment(row.dataset.department || '');
+                        row.dataset.type = normType(row.dataset.type || '');
                     });
                 }
             }, 0);
@@ -16259,6 +16333,282 @@ document.addEventListener('fullscreenchange', () => {
 })();
 </script>
 
+
+
+
+<script>
+/* MATERIALS SEARCHABLE ITEM PICKER - FINAL OVERRIDE */
+(function installSearchableMaterialPicker() {
+    if (window.__searchableMaterialPickerInstalled) return;
+    window.__searchableMaterialPickerInstalled = true;
+
+    function esc(value) {
+        return String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+    }
+
+    function normalize(value) {
+        return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    function firstValue(object, keys) {
+        if (!object || typeof object !== 'object') return '';
+        for (const key of keys) {
+            const value = object[key];
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+                return String(value).trim();
+            }
+        }
+        return '';
+    }
+
+    function getMaterialId(item) {
+        return firstValue(item, ['id', 'materialId', 'material_id']);
+    }
+
+    function getMaterialProjectId(item) {
+        return firstValue(item, ['projectId', 'project_id']);
+    }
+
+    function getMaterialCode(item) {
+        return firstValue(item, [
+            'itemCode', 'item_code', 'Item Code', 'item code',
+            'materialCode', 'material_code', 'Material Code', 'material code',
+            'code'
+        ]);
+    }
+
+    function getMaterialName(item) {
+        return firstValue(item, [
+            'itemName', 'item_name', 'Item Name', 'item name',
+            'materialName', 'material_name', 'Material Name', 'material name',
+            'itemDescription', 'item_description', 'description', 'name', 'particulars'
+        ]);
+    }
+
+    function getMaterialDepartment(item) {
+        return firstValue(item, ['department', 'Department', 'designation']);
+    }
+
+    function getMaterialType(item) {
+        return firstValue(item, ['type', 'Type', 'materialType', 'material_type', 'category']);
+    }
+
+    function getMaterials() {
+        const rows = window.materialsMasterlist || (typeof materialsMasterlist !== 'undefined' ? materialsMasterlist : []) || [];
+        const projectId = window.currentProjectId || (typeof currentProjectId !== 'undefined' ? currentProjectId : null);
+
+        return rows.filter(item => {
+            const itemProjectId = getMaterialProjectId(item);
+            return !projectId || !itemProjectId || String(itemProjectId) === String(projectId);
+        });
+    }
+
+    function enhancePicker() {
+        const select = document.getElementById('transactionMaterialId');
+        if (!select || select.dataset.searchEnhanced === 'true') return;
+        select.dataset.searchEnhanced = 'true';
+        select.style.display = 'none';
+
+        const selected = getMaterials().find(item => String(getMaterialId(item)) === String(select.value));
+        const wrapper = document.createElement('div');
+        wrapper.className = 'material-search-picker';
+        wrapper.style.cssText = 'position:relative; width:100%;';
+        wrapper.innerHTML = `
+            <div style="position:relative;">
+                <input id="transactionMaterialSearch" type="text" autocomplete="off"
+                    placeholder="Type item code or item name..."
+                    value="${selected ? esc(`${getMaterialCode(selected)} - ${getMaterialName(selected)}`.replace(/^\s*-\s*|\s*-\s*$/g, '')) : ''}"
+                    style="width:100%; min-height:44px; padding:10px 42px 10px 12px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-surface); color:var(--text-main); font-size:0.95rem; outline:none;">
+                <button type="button" id="transactionMaterialClear" aria-label="Clear selected material"
+                    style="position:absolute; right:8px; top:50%; transform:translateY(-50%); border:0; background:transparent; cursor:pointer; color:var(--text-muted); font-size:18px; padding:4px 8px;">×</button>
+            </div>
+            <div id="transactionMaterialResults" style="display:none; position:absolute; z-index:10020; top:calc(100% + 6px); left:0; right:0; max-height:280px; overflow:auto; background:var(--bg-surface); border:1px solid var(--border-color); border-radius:10px; box-shadow:0 14px 35px rgba(15,23,42,.18);"></div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:6px;">Search by item code, item name, department, or type.</div>
+        `;
+        select.parentNode.insertBefore(wrapper, select.nextSibling);
+
+        const input = wrapper.querySelector('#transactionMaterialSearch');
+        const results = wrapper.querySelector('#transactionMaterialResults');
+        const clear = wrapper.querySelector('#transactionMaterialClear');
+        let activeIndex = -1;
+        let visible = [];
+
+        function close() {
+            results.style.display = 'none';
+            activeIndex = -1;
+        }
+
+        function choose(item) {
+            const materialId = getMaterialId(item);
+            const itemCode = getMaterialCode(item);
+            const itemName = getMaterialName(item);
+
+            select.value = String(materialId || '');
+            input.value = `${itemCode} - ${itemName}`.replace(/^\s*-\s*|\s*-\s*$/g, '');
+
+            const itemCodeInput = document.getElementById('transactionItemCode');
+            const itemNameInput = document.getElementById('transactionItemName');
+            if (itemCodeInput) itemCodeInput.value = itemCode;
+            if (itemNameInput) itemNameInput.value = itemName;
+
+            close();
+            window.handleMaterialTransactionItemChange?.();
+        }
+
+        function draw() {
+            const q = normalize(input.value);
+            visible = getMaterials().filter(item => {
+                const haystack = normalize([
+                    getMaterialCode(item),
+                    getMaterialName(item),
+                    getMaterialDepartment(item),
+                    getMaterialType(item)
+                ].join(' '));
+                return !q || haystack.includes(q);
+            }).slice(0, 40);
+
+            if (!visible.length) {
+                results.innerHTML = '<div style="padding:16px; color:var(--text-muted); text-align:center;">No matching material item found.</div>';
+            } else {
+                results.innerHTML = visible.map((item, index) => `
+                    <button type="button" data-material-index="${index}"
+                        style="display:block; width:100%; text-align:left; border:0; border-bottom:1px solid var(--border-color); background:${index === activeIndex ? 'var(--bg-body)' : 'var(--bg-surface)'}; padding:11px 14px; cursor:pointer; color:var(--text-main);">
+                        <div style="font-weight:700; font-size:0.9rem;">${esc(getMaterialCode(item) || 'No item code')}</div>
+                        <div style="font-size:0.88rem; margin-top:2px;">${esc(getMaterialName(item) || 'No item name')}</div>
+                        <div style="font-size:0.74rem; color:var(--text-muted); margin-top:4px;">${esc(getMaterialDepartment(item) || '-')} · ${esc(getMaterialType(item) || '-')}</div>
+                    </button>
+                `).join('');
+            }
+            results.style.display = 'block';
+        }
+
+        input.addEventListener('focus', () => { if (normalize(input.value)) draw(); });
+        input.addEventListener('input', () => {
+            select.value = '';
+            window.handleMaterialTransactionItemChange?.();
+            activeIndex = -1;
+            draw();
+        });
+        input.addEventListener('keydown', event => {
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                activeIndex = Math.min(activeIndex + 1, visible.length - 1);
+                draw();
+            } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                activeIndex = Math.max(activeIndex - 1, 0);
+                draw();
+            } else if (event.key === 'Enter' && activeIndex >= 0 && visible[activeIndex]) {
+                event.preventDefault();
+                choose(visible[activeIndex]);
+            } else if (event.key === 'Escape') {
+                close();
+            }
+        });
+        results.addEventListener('mousedown', event => {
+            const button = event.target.closest('[data-material-index]');
+            if (!button) return;
+            event.preventDefault();
+            const item = visible[Number(button.dataset.materialIndex)];
+            if (item) choose(item);
+        });
+        clear.addEventListener('click', () => {
+            select.value = '';
+            input.value = '';
+            window.handleMaterialTransactionItemChange?.();
+            input.focus();
+            draw();
+        });
+        document.addEventListener('mousedown', event => {
+            if (!wrapper.contains(event.target)) close();
+        }, { once: false });
+    }
+
+    const originalOpen = window.openNewTransactionModal;
+    if (typeof originalOpen === 'function') {
+        window.openNewTransactionModal = async function searchableOpenNewTransactionModal() {
+            const result = await originalOpen.apply(this, arguments);
+            requestAnimationFrame(enhancePicker);
+            return result;
+        };
+    }
+})();
+</script>
+</body>
+</html>
+<script>
+/* =========================================================
+   MATERIALS GLOBAL SEARCH — FILTER FULL DATASET BEFORE PAGING
+   Final override. Keeps existing modal and pagination.
+========================================================= */
+(function installMaterialsGlobalSearchAllPagesFix() {
+    if (window.__materialsGlobalSearchAllPagesFinalInstalled) return;
+    window.__materialsGlobalSearchAllPagesFinalInstalled = true;
+
+    function read(id) {
+        return document.getElementById(id)?.value || '';
+    }
+
+    function restoreSearchFocus(id, cursorPosition) {
+        requestAnimationFrame(() => {
+            const input = document.getElementById(id);
+            if (!input) return;
+            input.focus();
+            const position = Math.min(cursorPosition, input.value.length);
+            if (typeof input.setSelectionRange === 'function') {
+                input.setSelectionRange(position, position);
+            }
+        });
+    }
+
+    window.filterMaterialsMasterlistTable = function filterMaterialsMasterlistAcrossAllPages() {
+        const searchInput = document.getElementById('materialsMasterlistSearch');
+        const nextSearch = searchInput?.value || '';
+        const nextDepartment = read('materialsMasterlistDepartmentFilter');
+        const nextType = read('materialsMasterlistTypeFilter');
+        const cursorPosition = searchInput?.selectionStart ?? nextSearch.length;
+
+        const changed =
+            nextSearch !== (window.__materialsMasterlistSearch || '') ||
+            nextDepartment !== (window.__materialsMasterlistDepartmentFilter || '') ||
+            nextType !== (window.__materialsMasterlistTypeFilter || '');
+
+        // Render wrappers call this again after drawing the table.
+        // Do nothing when the controls already match the stored filter state.
+        if (!changed) return;
+
+        window.__materialsMasterlistSearch = nextSearch;
+        window.__materialsMasterlistDepartmentFilter = nextDepartment;
+        window.__materialsMasterlistTypeFilter = nextType;
+        window.__materialsMasterlistPage = 1;
+
+        window.renderMaterialsView?.();
+        restoreSearchFocus('materialsMasterlistSearch', cursorPosition);
+    };
+
+    window.filterMaterialsTransactionsTable = function filterMaterialsTransactionsAcrossAllPages() {
+        const searchInput = document.getElementById('materialsTransactionSearch');
+        const nextSearch = searchInput?.value || '';
+        const nextType = read('materialsTransactionTypeFilter');
+        const cursorPosition = searchInput?.selectionStart ?? nextSearch.length;
+
+        const changed =
+            nextSearch !== (window.__materialsTransactionSearch || '') ||
+            nextType !== (window.__materialsTransactionTypeFilter || '');
+
+        if (!changed) return;
+
+        window.__materialsTransactionSearch = nextSearch;
+        window.__materialsTransactionTypeFilter = nextType;
+        window.__materialsTransactionsPage = 1;
+
+        window.renderMaterialsView?.();
+        restoreSearchFocus('materialsTransactionSearch', cursorPosition);
+    };
+
+    console.log('Materials global search final fix installed: full dataset is filtered before pagination.');
+})();
+</script>
 
 
 </body>

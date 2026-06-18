@@ -3872,6 +3872,13 @@
                     <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px;">
                         ${cardsHtml}
                     </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; color:var(--text-muted); font-size:0.85rem;">
+                        <span>Showing ${materialsTransactions.length === 0 ? 0 : transactionStart + 1}-${Math.min(transactionStart + MATERIALS_PAGE_SIZE, materialsTransactions.length)} of ${materialsTransactions.length}</span>
+                        <div style="display:flex; gap:8px;">
+                            <button class="btn btn-secondary" ${materialsTransactionsPage <= 1 ? 'disabled' : ''} onclick="materialsTransactionsPage = Math.max(1, materialsTransactionsPage - 1); renderMaterialsView();">Previous</button>
+                            <button class="btn btn-secondary" ${materialsTransactionsPage >= transactionTotalPages ? 'disabled' : ''} onclick="materialsTransactionsPage = Math.min(${transactionTotalPages}, materialsTransactionsPage + 1); renderMaterialsView();">Next</button>
+                        </div>
+                    </div>
                 `;
             }
 
@@ -5234,6 +5241,9 @@ window.renderBoqChargingView = function() {
         let materialsTransactions = [];
 
         let currentMaterialsTab = 'dashboard';
+        let materialsMasterlistPage = 1;
+        let materialsTransactionsPage = 1;
+        const MATERIALS_PAGE_SIZE = 50;
 
         window.fuelRecords = window.fuelRecords || [];
         let fuelRecords = window.fuelRecords;
@@ -8656,101 +8666,111 @@ window.renderBoqChargingView = function() {
             document.body.insertAdjacentHTML('beforeend', modalHtml);
         };
 
+        window.materialEscapeHtml = function(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        };
+
+        window.filterMaterialItemOptions = function(searchValue) {
+            const query = String(searchValue || '').trim().toLowerCase();
+            const dropdown = document.getElementById('materialItemDropdown');
+            if (!dropdown) return;
+
+            const matches = materialsMasterlist
+                .filter(item => {
+                    if (!query) return true;
+                    return String(item.itemCode || '').toLowerCase().includes(query)
+                        || String(item.itemName || '').toLowerCase().includes(query)
+                        || String(item.department || '').toLowerCase().includes(query)
+                        || String(item.type || '').toLowerCase().includes(query);
+                })
+                .slice(0, 100);
+
+            dropdown.innerHTML = matches.length
+                ? matches.map(item => `
+                    <button type="button"
+                        class="material-search-option"
+                        data-code="${materialEscapeHtml(item.itemCode)}"
+                        onclick="selectMaterialItem('${materialEscapeHtml(String(item.itemCode || '').replace(/'/g, "\\'"))}')"
+                        style="width: 100%; border: 0; border-bottom: 1px solid var(--border-color); background: var(--bg-surface); padding: 12px 14px; text-align: left; cursor: pointer; display: block;">
+                        <div style="font-weight: 700; color: var(--text-main); margin-bottom: 3px;">${materialEscapeHtml(item.itemCode || '-')}</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted); white-space: normal;">${materialEscapeHtml(item.itemName || 'Unnamed item')}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">${materialEscapeHtml(item.department || '-')} • ${materialEscapeHtml(item.type || '-')}</div>
+                    </button>
+                `).join('')
+                : '<div style="padding: 18px; color: var(--text-muted); text-align: center;">No matching material found.</div>';
+
+            dropdown.style.display = 'block';
+        };
+
+        window.selectMaterialItem = function(itemCode) {
+            const item = materialsMasterlist.find(entry => String(entry.itemCode) === String(itemCode));
+            if (!item) return;
+
+            const input = document.getElementById('transMaterialSearch');
+            const hidden = document.getElementById('transMaterialCode');
+            const typeInput = document.getElementById('transMaterialType');
+            const dropdown = document.getElementById('materialItemDropdown');
+
+            if (input) input.value = `${item.itemCode} - ${item.itemName}`;
+            if (hidden) hidden.value = item.itemCode || '';
+            if (typeInput) typeInput.value = item.type || '';
+            if (dropdown) dropdown.style.display = 'none';
+        };
+
         window.openNewTransactionModal = function() {
             if (!window.legacyGuardAdd('materials_transactions')) return;
-            const prsOptions = prsRecords.map(prs => `<option value="${prs.prsNo}" data-charging="${prs.activityCharging}">${prs.prsNo}</option>`).join('');
-            const itemOptions = materialsMasterlist.map(item => `<option value="${item.itemCode}">${item.itemCode} - ${item.itemName}</option>`).join('');
+            const prsOptions = prsRecords.map(prs => `<option value="${materialEscapeHtml(prs.prsNo)}" data-charging="${materialEscapeHtml(prs.activityCharging)}">${materialEscapeHtml(prs.prsNo)}</option>`).join('');
 
             const modalHtml = `
                 <div id="newTransactionModal" class="modal-overlay active">
-                    <div class="modal" style="max-width: 800px; max-height: 90vh; display: flex; flex-direction: column;">
+                    <div class="modal" style="max-width: 800px; max-height: 90vh; display: flex; flex-direction: column; overflow: visible;">
                         <div class="modal-header">
                             <div>
-                                <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 4px; color: var(--text-primary);">Raw Transaction Entry</h2>
-                                <p style="color: var(--text-muted); font-size: 0.875rem; margin: 0;">Record stock movement for the active project inventory.</p>
+                                <h2 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 4px; color: var(--text-primary);">New Transaction</h2>
+                                <p style="color: var(--text-muted); font-size: 0.875rem; margin: 0;">Record material movement for this project.</p>
                             </div>
                             <button class="close-modal" onclick="document.getElementById('newTransactionModal').remove()">&times;</button>
                         </div>
                         <div class="modal-body" style="overflow-y: auto; padding-right: 16px;">
                             <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em;">Transaction Info</div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px;">
-                                <div class="form-group">
-                                    <label class="form-label">Date</label>
-                                    <input type="date" class="form-control" value="${new Date().toISOString().split('T')[0]}">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Time</label>
-                                    <input type="time" class="form-control">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Transaction Type</label>
-                                    <select class="form-control">
-                                        <option>IN</option>
-                                        <option>OUT</option>
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">MRS / Withdrawal No.</label>
-                                    <input type="text" class="form-control" placeholder="Enter MRS / Withdrawal No.">
-                                </div>
+                                <div class="form-group"><label class="form-label">Date</label><input type="date" class="form-control" value="${new Date().toISOString().split('T')[0]}"></div>
+                                <div class="form-group"><label class="form-label">Time</label><input type="time" class="form-control"></div>
+                                <div class="form-group"><label class="form-label">Transaction Type</label><select class="form-control"><option>IN</option><option>OUT</option></select></div>
+                                <div class="form-group"><label class="form-label">MRS / Withdrawal No.</label><input type="text" class="form-control" placeholder="Enter MRS / Withdrawal No."></div>
                             </div>
 
                             <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em;">Reference Details</div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 32px;">
-                                <div class="form-group">
-                                    <label class="form-label">PRS No.</label>
-                                    <select class="form-control" id="transPrsNo" onchange="document.getElementById('transCharging').value = this.options[this.selectedIndex].getAttribute('data-charging') || ''">
-                                        <option value="">Select PRS...</option>
-                                        ${prsOptions}
-                                    </select>
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Charging</label>
-                                    <input type="text" class="form-control" id="transCharging" placeholder="Auto-filled from PRS" readonly style="background-color: var(--bg-body); cursor: not-allowed;">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Actual Charging</label>
-                                    <input type="text" class="form-control">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Accountability No.</label>
-                                    <input type="text" class="form-control" placeholder="Enter Accountability No.">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">PO No.</label>
-                                    <input type="text" class="form-control">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">PO Qty</label>
-                                    <input type="number" class="form-control" value="0">
-                                </div>
+                                <div class="form-group"><label class="form-label">PRS No.</label><select class="form-control" id="transPrsNo" onchange="document.getElementById('transCharging').value = this.options[this.selectedIndex].getAttribute('data-charging') || ''"><option value="">Select PRS...</option>${prsOptions}</select></div>
+                                <div class="form-group"><label class="form-label">Charging</label><input type="text" class="form-control" id="transCharging" placeholder="Auto-filled from PRS" readonly style="background-color: var(--bg-body); cursor: not-allowed;"></div>
+                                <div class="form-group"><label class="form-label">Actual Charging</label><input type="text" class="form-control"></div>
+                                <div class="form-group"><label class="form-label">Accountability No.</label><input type="text" class="form-control" placeholder="Enter Accountability No."></div>
+                                <div class="form-group"><label class="form-label">PO No.</label><input type="text" class="form-control"></div>
+                                <div class="form-group"><label class="form-label">PO Qty</label><input type="number" class="form-control" value="0"></div>
                             </div>
 
                             <div style="font-size: 0.75rem; font-weight: 700; color: var(--text-muted); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.05em;">Item Details</div>
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                                <div class="form-group" style="grid-column: span 2;">
-                                    <label class="form-label">Item</label>
-                                    <select class="form-control">
-                                        <option value="">Select Material...</option>
-                                        ${itemOptions}
-                                    </select>
+                                <div class="form-group" style="grid-column: span 2; position: relative;">
+                                    <label class="form-label">Material Item</label>
+                                    <input type="hidden" id="transMaterialCode">
+                                    <div style="position: relative;">
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                                        <input type="text" id="transMaterialSearch" class="form-control" autocomplete="off" placeholder="Type item code or item name..." onfocus="filterMaterialItemOptions(this.value)" oninput="filterMaterialItemOptions(this.value)" style="padding-left: 42px; padding-right: 42px;">
+                                        <button type="button" onclick="filterMaterialItemOptions(document.getElementById('transMaterialSearch').value)" aria-label="Open material list" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; cursor: pointer; color: var(--text-muted); font-size: 18px;">⌄</button>
+                                    </div>
+                                    <div id="materialItemDropdown" style="display: none; position: absolute; z-index: 10020; top: calc(100% - 2px); left: 0; right: 0; max-height: 280px; overflow-y: auto; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 10px; box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);"></div>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 6px;">Search by item code, item name, department, or type.</div>
                                 </div>
-                                <div class="form-group">
-                                    <label class="form-label">Quantity</label>
-                                    <input type="number" class="form-control" value="1">
-                                </div>
-                                <div class="form-group">
-                                    <label class="form-label">Type</label>
-                                    <select class="form-control">
-                                        <option>Select item first</option>
-                                        <option>Consumable</option>
-                                        <option>Non-Consumable</option>
-                                    </select>
-                                </div>
-                                <div class="form-group" style="grid-column: span 2;">
-                                    <label class="form-label">Remarks</label>
-                                    <textarea class="form-control" rows="2" placeholder="Optional notes on transaction details"></textarea>
-                                </div>
+                                <div class="form-group"><label class="form-label">Quantity</label><input type="number" class="form-control" value="1" min="1"></div>
+                                <div class="form-group"><label class="form-label">Type</label><input type="text" id="transMaterialType" class="form-control" placeholder="Auto-filled from item" readonly style="background-color: var(--bg-body); cursor: not-allowed;"></div>
+                                <div class="form-group" style="grid-column: span 2;"><label class="form-label">Remarks</label><textarea class="form-control" rows="2" placeholder="Optional notes on transaction details"></textarea></div>
                             </div>
                         </div>
                         <div style="padding: 16px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 12px; background: var(--bg-surface); border-radius: 0 0 var(--radius-lg) var(--radius-lg);">
@@ -8761,6 +8781,7 @@ window.renderBoqChargingView = function() {
                 </div>
             `;
             document.body.insertAdjacentHTML('beforeend', modalHtml);
+            requestAnimationFrame(() => document.getElementById('transMaterialSearch')?.focus());
         };
 
         window.renderMaterialsView = function() {
@@ -8844,7 +8865,11 @@ window.renderBoqChargingView = function() {
                     </div>
                 `;
             } else if (currentMaterialsTab === 'masterlist') {
-                let tableRows = materialsMasterlist.map(m => {
+                const masterlistTotalPages = Math.max(1, Math.ceil(materialsMasterlist.length / MATERIALS_PAGE_SIZE));
+                materialsMasterlistPage = Math.min(materialsMasterlistPage, masterlistTotalPages);
+                const masterlistStart = (materialsMasterlistPage - 1) * MATERIALS_PAGE_SIZE;
+                const visibleMasterlist = materialsMasterlist.slice(masterlistStart, masterlistStart + MATERIALS_PAGE_SIZE);
+                let tableRows = visibleMasterlist.map(m => {
                     const status = m.currentStock <= m.minStock ? '<span style="background: #ffedd5; color: var(--badge-text-orange); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Low Stock</span>' : '<span style="background: var(--badge-bg-green); color: var(--badge-text-green); padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Fully Stocked</span>';
                     return `
                         <tr style="border-bottom: 1px solid var(--border-color);">
@@ -8897,9 +8922,20 @@ window.renderBoqChargingView = function() {
                             </tbody>
                         </table>
                     </div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:12px; color:var(--text-muted); font-size:0.85rem;">
+                        <span>Showing ${materialsMasterlist.length === 0 ? 0 : masterlistStart + 1}-${Math.min(masterlistStart + MATERIALS_PAGE_SIZE, materialsMasterlist.length)} of ${materialsMasterlist.length}</span>
+                        <div style="display:flex; gap:8px;">
+                            <button class="btn btn-secondary" ${materialsMasterlistPage <= 1 ? 'disabled' : ''} onclick="materialsMasterlistPage = Math.max(1, materialsMasterlistPage - 1); renderMaterialsView();">Previous</button>
+                            <button class="btn btn-secondary" ${materialsMasterlistPage >= masterlistTotalPages ? 'disabled' : ''} onclick="materialsMasterlistPage = Math.min(${masterlistTotalPages}, materialsMasterlistPage + 1); renderMaterialsView();">Next</button>
+                        </div>
+                    </div>
                 `;
             } else if (currentMaterialsTab === 'transactions') {
-                let tableRows = materialsTransactions.map(t => {
+                const transactionTotalPages = Math.max(1, Math.ceil(materialsTransactions.length / MATERIALS_PAGE_SIZE));
+                materialsTransactionsPage = Math.min(materialsTransactionsPage, transactionTotalPages);
+                const transactionStart = (materialsTransactionsPage - 1) * MATERIALS_PAGE_SIZE;
+                const visibleTransactions = materialsTransactions.slice(transactionStart, transactionStart + MATERIALS_PAGE_SIZE);
+                let tableRows = visibleTransactions.map(t => {
                     return `
                         <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 16px; font-size: 0.85rem;">${t.date}</td>
