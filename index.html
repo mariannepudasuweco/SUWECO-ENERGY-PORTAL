@@ -3662,7 +3662,21 @@ window.renderProjectView = function(projectId) {
                 projectSchedules[currentProjectId] = {};
             }
             const scheduleData = projectSchedules[currentProjectId];
-            const projectBudgets = boqBudgets[currentProjectId] || {};
+
+            // Always read the latest BOQ budget map from window.
+            // BOQ Charging may replace/update window.boqBudgets after this script loads,
+            // so relying only on the older local reference can show zero allotted budget.
+            const activeScheduleProjectId = String(
+                currentProjectId || window.currentProjectId || ''
+            ).trim();
+
+            window.boqBudgets = window.boqBudgets || boqBudgets || {};
+            boqBudgets = window.boqBudgets;
+
+            const projectBudgets =
+                boqBudgets[activeScheduleProjectId] ||
+                boqBudgets[currentProjectId] ||
+                {};
 
             const parentNames = {
                 'B2': 'Permitting',
@@ -3694,73 +3708,160 @@ window.renderProjectView = function(projectId) {
             let totalProjectBudget = 0;
 
             let customProjectScheduleTasks = window.customProjectScheduleTasks || {};
-            let combinedOptionsForSched1 = [...subtaskChargingOptions, ...(customProjectScheduleTasks[currentProjectId] || [])];
+
+            // Combine built-in and backend tasks, then remove duplicate task codes.
+            // Built-in options are first, so their descriptive names are retained.
+            const rawScheduleOptions = [
+                ...subtaskChargingOptions,
+                ...(customProjectScheduleTasks[currentProjectId] || [])
+            ];
+
+            const scheduleOptionsByCode = new Map();
+
+            rawScheduleOptions.forEach(opt => {
+                const optionText = String(opt || '').trim();
+                const match = optionText.match(/^([A-D])([0-9.]+)\s*-\s*(.*?)(?:\s*\(.*\))?$/);
+                if (!match) return;
+
+                const taskCode = match[1] + match[2];
+                if (!scheduleOptionsByCode.has(taskCode)) {
+                    scheduleOptionsByCode.set(taskCode, optionText);
+                }
+            });
+
+            const combinedOptionsForSched1 = Array.from(scheduleOptionsByCode.values());
+
             combinedOptionsForSched1.sort((a, b) => {
-                let pA = a.split(' - ')[0].match(/^([A-D])([0-9.]+)$/);
-                let pB = b.split(' - ')[0].match(/^([A-D])([0-9.]+)$/);
-                if (!pA || !pB) return a.localeCompare(b);
+                const codeA = String(a).split(' - ')[0].trim();
+                const codeB = String(b).split(' - ')[0].trim();
+                const pA = codeA.match(/^([A-D])([0-9.]+)$/);
+                const pB = codeB.match(/^([A-D])([0-9.]+)$/);
+
+                if (!pA || !pB) return String(a).localeCompare(String(b));
                 if (pA[1] !== pB[1]) return pA[1].localeCompare(pB[1]);
-                let partsA = pA[2].split('.').map(Number);
-                let partsB = pB[2].split('.').map(Number);
-                for(let i=0; i<Math.max(partsA.length, partsB.length); i++) {
-                    let nA = partsA[i] || 0;
-                    let nB = partsB[i] || 0;
+
+                const partsA = pA[2].split('.').map(Number);
+                const partsB = pB[2].split('.').map(Number);
+
+                for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+                    const nA = partsA[i] ?? -1;
+                    const nB = partsB[i] ?? -1;
                     if (nA !== nB) return nA - nB;
                 }
+
                 return 0;
             });
+
+            // Keep one node per task code. Existing top-level rows are converted
+            // into expandable parents when child tasks are found.
+            const scheduleNodesByCode = {};
+
+            // First pass: create only top-level rows such as B1, B2, C1.
             combinedOptionsForSched1.forEach(opt => {
-                const match = opt.match(/^([A-D])([0-9.]+)\s*-\s*(.*?)(?:\s*\(.*\))?$/);
-                if (match) {
-                    const category = match[1];
-                    const code = match[1] + match[2];
-                    let name = match[3].trim();
-                    name = name.replace(/\s*\(PROCUREMENT\)$/i, '').replace(/\s*\(CONSTRUCTION\)$/i, '');
+                const match = String(opt).match(/^([A-D])([0-9.]+)\s*-\s*(.*?)(?:\s*\(.*\))?$/);
+                if (!match) return;
 
-                    const budget = projectBudgets[code] || 0;
-                    totalProjectBudget += budget;
+                const category = match[1];
+                const code = match[1] + match[2];
+                if (code.includes('.')) return;
 
-                    if (!scheduleData[code]) {
-                        scheduleData[code] = {
-                            duration: '', targetStart: '', targetEnd: '', qty: '', weight: '', status: 'Not Started',
-                            actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
-                        };
-                    }
+                let name = match[3].trim();
+                name = name
+                    .replace(/\s*\(PROCUREMENT\)$/i, '')
+                    .replace(/\s*\(CONSTRUCTION\)$/i, '');
 
-                    const item = {
-                        code: code,
-                        name: name,
-                        budget: budget,
-                        data: scheduleData[code]
+                const budget = projectBudgets[code] || 0;
+                totalProjectBudget += budget;
+
+                if (!scheduleData[code]) {
+                    scheduleData[code] = {
+                        duration: '', targetStart: '', targetEnd: '', qty: '', weight: '', status: 'Not Started',
+                        actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
+                    };
+                }
+
+                const item = {
+                    code,
+                    name,
+                    budget,
+                    data: scheduleData[code],
+                    isParent: false,
+                    expanded: scheduleExpandedParents[code] !== false,
+                    subItems: []
+                };
+
+                scheduleNodesByCode[code] = item;
+                tree[category].items.push(item);
+            });
+
+            // Second pass: attach child tasks to the already existing parent row.
+            combinedOptionsForSched1.forEach(opt => {
+                const match = String(opt).match(/^([A-D])([0-9.]+)\s*-\s*(.*?)(?:\s*\(.*\))?$/);
+                if (!match) return;
+
+                const category = match[1];
+                const code = match[1] + match[2];
+                if (!code.includes('.')) return;
+
+                let name = match[3].trim();
+                name = name
+                    .replace(/\s*\(PROCUREMENT\)$/i, '')
+                    .replace(/\s*\(CONSTRUCTION\)$/i, '');
+
+                const parentCode = code.split('.')[0];
+                const budget = projectBudgets[code] || 0;
+                totalProjectBudget += budget;
+
+                if (!scheduleData[code]) {
+                    scheduleData[code] = {
+                        duration: '', targetStart: '', targetEnd: '', qty: '', weight: '', status: 'Not Started',
+                        actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
+                    };
+                }
+
+                if (!scheduleData[parentCode]) {
+                    scheduleData[parentCode] = {
+                        duration: '', targetStart: '', targetEnd: '', qty: '', weight: '', status: 'Not Started',
+                        actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
+                    };
+                }
+
+                let parentItem = scheduleNodesByCode[parentCode];
+
+                // Fallback only when the parent code is not in the built-in list.
+                if (!parentItem) {
+                    parentItem = {
+                        code: parentCode,
+                        name: parentNames[parentCode] || parentCode,
+                        budget: projectBudgets[parentCode] || 0,
+                        data: scheduleData[parentCode],
+                        isParent: true,
+                        expanded: scheduleExpandedParents[parentCode] !== false,
+                        subItems: []
                     };
 
-                    if (code.includes('.')) {
-                        const parentCode = code.split('.')[0];
-                        if (!scheduleData[parentCode]) {
-                            scheduleData[parentCode] = {
-                                duration: '', targetStart: '', targetEnd: '', qty: '', weight: '', status: 'Not Started',
-                                actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
-                            };
-                        }
-                        if (!itemsByParent[parentCode]) {
-                            itemsByParent[parentCode] = {
-                                code: parentCode,
-                                name: parentNames[parentCode] || parentCode,
-                                isParent: true,
-                                expanded: scheduleExpandedParents[parentCode] !== false,
-                                subItems: [],
-                                budget: 0,
-                                data: scheduleData[parentCode]
-                            };
-                            tree[category].items.push(itemsByParent[parentCode]);
-                        }
-                        itemsByParent[parentCode].subItems.push(item);
-                        itemsByParent[parentCode].budget += item.budget;
-                    } else {
-                        tree[category].items.push(item);
-                    }
+                    scheduleNodesByCode[parentCode] = parentItem;
+                    tree[category].items.push(parentItem);
                 }
+
+                // Reuse the same parent row instead of adding another B1/B2 row.
+                parentItem.isParent = true;
+                parentItem.expanded = scheduleExpandedParents[parentCode] !== false;
+                if (!Array.isArray(parentItem.subItems)) parentItem.subItems = [];
+
+                if (!parentItem.subItems.some(child => child.code === code)) {
+                    parentItem.subItems.push({
+                        code,
+                        name,
+                        budget,
+                        data: scheduleData[code]
+                    });
+                    parentItem.budget = Number(parentItem.budget || 0) + Number(budget || 0);
+                }
+
+                itemsByParent[parentCode] = parentItem;
             });
+
 
             // Calculate totals from Manila and Local records
             const mnlRecords = manilaRecords.filter(r => r.projectId === currentProjectId);

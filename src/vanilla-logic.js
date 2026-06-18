@@ -2428,6 +2428,7 @@
             };
 
             const itemsByParent = {};
+            const topLevelItemsByCode = {};
             let totalProjectBudget = 0;
 
             let customProjectScheduleTasks = window.customProjectScheduleTasks || {};
@@ -2479,22 +2480,52 @@
                                 actualStart: '', actualEnd: '', actualQty: '', targetQty: ''
                             };
                         }
+
+                        // Reuse the existing built-in parent row instead of
+                        // creating a second row with the same code. For example,
+                        // B1 becomes the expandable parent of B1.1.
                         if (!itemsByParent[parentCode]) {
-                            itemsByParent[parentCode] = {
-                                code: parentCode,
-                                name: parentNames[parentCode] || parentCode,
-                                isParent: true,
-                                expanded: scheduleExpandedParents[parentCode] !== false,
-                                subItems: [],
-                                budget: 0,
-                                data: scheduleData[parentCode]
-                            };
-                            tree[category].items.push(itemsByParent[parentCode]);
+                            const existingParent = topLevelItemsByCode[parentCode];
+
+                            if (existingParent) {
+                                existingParent.isParent = true;
+                                existingParent.expanded = scheduleExpandedParents[parentCode] !== false;
+                                existingParent.subItems = existingParent.subItems || [];
+                                existingParent.data = scheduleData[parentCode];
+                                itemsByParent[parentCode] = existingParent;
+                            } else {
+                                itemsByParent[parentCode] = {
+                                    code: parentCode,
+                                    name: parentNames[parentCode] || parentCode,
+                                    isParent: true,
+                                    expanded: scheduleExpandedParents[parentCode] !== false,
+                                    subItems: [],
+                                    budget: 0,
+                                    data: scheduleData[parentCode]
+                                };
+                                tree[category].items.push(itemsByParent[parentCode]);
+                                topLevelItemsByCode[parentCode] = itemsByParent[parentCode];
+                            }
                         }
-                        itemsByParent[parentCode].subItems.push(item);
-                        itemsByParent[parentCode].budget += item.budget;
+
+                        // Prevent the same child code from appearing more than once.
+                        const childAlreadyExists = itemsByParent[parentCode].subItems
+                            .some(existingChild => existingChild.code === item.code);
+                        if (!childAlreadyExists) {
+                            itemsByParent[parentCode].subItems.push(item);
+                            itemsByParent[parentCode].budget += item.budget;
+                        }
                     } else {
-                        tree[category].items.push(item);
+                        // Keep only one top-level row for each task code.
+                        if (!topLevelItemsByCode[code]) {
+                            tree[category].items.push(item);
+                            topLevelItemsByCode[code] = item;
+                        } else {
+                            // Merge the latest backend data into the existing row.
+                            topLevelItemsByCode[code].name = item.name || topLevelItemsByCode[code].name;
+                            topLevelItemsByCode[code].data = item.data || topLevelItemsByCode[code].data;
+                            topLevelItemsByCode[code].budget = item.budget;
+                        }
                     }
                 }
             });
@@ -3388,44 +3419,78 @@
             window.updateAutoProgress();
         };
 
-        window.saveScheduleItem = function(code) {
-            const data = projectSchedules[currentProjectId][code];
-            if (data) {
-                if (!boqBudgets[currentProjectId]) {
-                    boqBudgets[currentProjectId] = {};
+        window.saveScheduleItem = async function(code) {
+            const activeProjectId = window.currentProjectId || currentProjectId;
+            const data = projectSchedules[activeProjectId]?.[code];
+            if (!data) return;
+
+            try {
+                if (!boqBudgets[activeProjectId]) {
+                    boqBudgets[activeProjectId] = {};
                 }
-                boqBudgets[currentProjectId][code] = parseFloat(document.getElementById('schedBudget').value) || 0;
-                
-                let isCustomTask = false;
-                if (window.customProjectScheduleTasks && window.customProjectScheduleTasks[currentProjectId]) {
-                    const idx = window.customProjectScheduleTasks[currentProjectId].findIndex(o => o.startsWith(code + ' - '));
+
+                const budgetInput = document.getElementById('schedBudget');
+                boqBudgets[activeProjectId][code] = parseFloat(budgetInput?.value || '0') || 0;
+
+                let taskName = data.name || code;
+                if (window.customProjectScheduleTasks?.[activeProjectId]) {
+                    const idx = window.customProjectScheduleTasks[activeProjectId]
+                        .findIndex(o => o.startsWith(code + ' - '));
+
                     if (idx !== -1) {
-                        isCustomTask = true;
                         const taskNameInput = document.getElementById('schedTaskName');
                         if (taskNameInput) {
-                            window.customProjectScheduleTasks[currentProjectId][idx] = code + ' - ' + taskNameInput.value.trim();
+                            taskName = taskNameInput.value.trim() || taskName;
+                            window.customProjectScheduleTasks[activeProjectId][idx] =
+                                code + ' - ' + taskName;
+                        } else {
+                            taskName = window.customProjectScheduleTasks[activeProjectId][idx]
+                                .split(' - ').slice(1).join(' - ').trim() || taskName;
                         }
                     }
                 }
 
-                data.duration = document.getElementById('schedDuration').value;
-                
-                const progVal = document.getElementById('schedProgress') ? document.getElementById('schedProgress').value : '';
-                data.computedProgress = progVal === '' ? '' : parseFloat(progVal);
+                if (!taskName || taskName === code) {
+                    const option = (window.subtaskChargingOptions || subtaskChargingOptions || [])
+                        .find(opt => String(opt).startsWith(code + ' - '));
+                    if (option) taskName = String(option).split(' - ').slice(1).join(' - ').trim();
+                }
 
-                data.targetStart = document.getElementById('schedTargetStart').value;
-                data.targetEnd = document.getElementById('schedTargetEnd').value;
-                data.actualStart = document.getElementById('schedActualStart').value;
-                data.actualEnd = document.getElementById('schedActualEnd').value;
-                data.targetQty = document.getElementById('schedTargetQty').value;
-                data.actualQty = document.getElementById('schedActualQty').value;
-                data.remarks = document.getElementById('schedRemarks').value;
+                data.name = taskName;
+                data.duration = document.getElementById('schedDuration')?.value || '';
 
-                document.getElementById('editScheduleModal').remove();
-                
-                // Force sync update stats before rendering
-                updateProjectScheduleStats(currentProjectId);
+                const progressValue = document.getElementById('schedProgress')?.value || '';
+                data.computedProgress = progressValue === '' ? 0 : parseFloat(progressValue);
+
+                const statusElement = document.getElementById('schedStatusBadgeSpan');
+                data.status = statusElement?.innerText?.trim() || data.status || 'Not Started';
+                data.targetStart = document.getElementById('schedTargetStart')?.value || '';
+                data.targetEnd = document.getElementById('schedTargetEnd')?.value || '';
+                data.actualStart = document.getElementById('schedActualStart')?.value || '';
+                data.actualEnd = document.getElementById('schedActualEnd')?.value || '';
+                data.targetQty = document.getElementById('schedTargetQty')?.value || '';
+                data.actualQty = document.getElementById('schedActualQty')?.value || '';
+                data.remarks = document.getElementById('schedRemarks')?.value || '';
+
+                if (typeof window.saveProjectScheduleTaskToSupabase !== 'function') {
+                    throw new Error('Project Schedule Supabase save function is unavailable.');
+                }
+
+                await window.saveProjectScheduleTaskToSupabase(code, taskName, data);
+
+                const modal = document.getElementById('editScheduleModal');
+                if (modal) modal.remove();
+
+                await window.loadProjectScheduleFromSupabase(activeProjectId);
+                updateProjectScheduleStats(activeProjectId);
                 renderProjectScheduleView();
+                window.showToast?.('Project schedule saved successfully.', 'success');
+            } catch (error) {
+                console.error('Project schedule save error:', error);
+                window.showToast?.(
+                    error instanceof Error ? error.message : 'Failed to save project schedule.',
+                    'error'
+                );
             }
         };
         // ==========================================
