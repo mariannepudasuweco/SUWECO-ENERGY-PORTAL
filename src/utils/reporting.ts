@@ -1145,7 +1145,8 @@ function sectionHasRealData(html: string): boolean {
 }
 
 async function captureCurrentPageSections(
-  pageTitle: string
+  pageTitle: string,
+  includeInternalTabs = false
 ): Promise<CapturedSection[]> {
   await delay(450);
 
@@ -1160,7 +1161,7 @@ async function captureCurrentPageSections(
     ];
   }
 
-  const tabLabels = getInternalTabLabels(container);
+  const tabLabels = includeInternalTabs ? getInternalTabLabels(container) : [];
 
   if (!tabLabels.length) {
     const html = captureCurrentContentHTML({
@@ -1865,7 +1866,7 @@ function printCapturedReportHTML(html: string): void {
 export async function generateCurrentPageReport(
   params: GenerateCurrentPageReportParams
 ): Promise<void> {
-  const sections = await captureCurrentPageSections(params.pageTitle);
+  const sections = await captureCurrentPageSections(params.pageTitle, false);
 
   if (!sections.length) {
     alert("No report data available for this page.");
@@ -1899,7 +1900,7 @@ export async function generateFullModuleReport(
     params.setActivePage(item.id);
     await delay(900);
 
-    const sections = await captureCurrentPageSections(item.label);
+    const sections = await captureCurrentPageSections(item.label, true);
 
     if (sections.length > 0) {
       allSections.push(...sections);

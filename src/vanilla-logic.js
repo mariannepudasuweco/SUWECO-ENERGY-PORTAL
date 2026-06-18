@@ -5298,6 +5298,7 @@ window.renderBoqChargingView = function() {
         window.localRecords = window.localRecords || [];
         let localRecords = window.localRecords;
         let currentLocalTab = 'procurement';
+        let localSharedFilters = { search: '', category: '', status: '' };
         let editingLocalId = null;
 
         window.materialsMasterlist = window.materialsMasterlist || [];
@@ -6562,7 +6563,7 @@ window.renderBoqChargingView = function() {
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 16px; margin-bottom: 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between;">
                     <div style="flex: 1; max-width: 400px; position: relative;">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                        <input type="text" id="localSearchInput" oninput="renderLocalTable()" placeholder="Search REPLE no., item, supplier, charging..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main);">
+                        <input type="text" id="localSearchInput" value="${escapeHTML(localSharedFilters.search)}" oninput="updateLocalSharedFilter('search', this.value)" placeholder="Search REPLE no., item, supplier, charging..." style="width: 100%; padding: 8px 12px 8px 36px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main);">
                     </div>
                     
                     <div style="display: flex; gap: 12px; align-items: center;">
@@ -6572,20 +6573,20 @@ window.renderBoqChargingView = function() {
                             <button id="localTabBudget" onclick="setLocalTab('budget')" style="padding: 6px 16px; border: none; background: ${currentLocalTab === 'budget' ? 'var(--bg-surface)' : 'transparent'}; color: ${currentLocalTab === 'budget' ? 'var(--text-main)' : 'var(--text-muted)'}; border-radius: 4px; font-size: 0.85rem; font-weight: ${currentLocalTab === 'budget' ? '600' : '500'}; cursor: pointer; box-shadow: var(--shadow-sm)' : 'none'};">Budget</button>
                         </div>
                         
-                        <select id="localCategoryFilter" onchange="renderLocalTable()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
-                            <option value="">All Categories</option>
-                            <option value="Admin Expense">Admin Expense</option>
-                            <option value="Materials Expense">Materials Expense</option>
-                            <option value="Manpower Expense">Manpower Expense</option>
+                        <select id="localCategoryFilter" onchange="updateLocalSharedFilter('category', this.value)" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
+                            <option value="" ${localSharedFilters.category === '' ? 'selected' : ''}>All Categories</option>
+                            <option value="Admin Expense" ${localSharedFilters.category === 'Admin Expense' ? 'selected' : ''}>Admin Expense</option>
+                            <option value="Materials Expense" ${localSharedFilters.category === 'Materials Expense' ? 'selected' : ''}>Materials Expense</option>
+                            <option value="Manpower Expense" ${localSharedFilters.category === 'Manpower Expense' ? 'selected' : ''}>Manpower Expense</option>
                         </select>
 
-                        <select id="localStatusFilter" onchange="renderLocalTable()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
-                            <option value="">All Status</option>
-                            <option value="Pending">Pending</option>
-                            <option value="ONGOING">ONGOING</option>
-                            <option value="Delivered">Delivered</option>
-                            <option value="Unpaid">Unpaid</option>
-                            <option value="Paid">Paid</option>
+                        <select id="localStatusFilter" onchange="updateLocalSharedFilter('status', this.value)" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main); min-width: 150px;">
+                            <option value="" ${localSharedFilters.status === '' ? 'selected' : ''}>All Status</option>
+                            <option value="Pending" ${localSharedFilters.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                            <option value="ONGOING" ${localSharedFilters.status === 'ONGOING' ? 'selected' : ''}>ONGOING</option>
+                            <option value="Delivered" ${localSharedFilters.status === 'Delivered' ? 'selected' : ''}>Delivered</option>
+                            <option value="Unpaid" ${localSharedFilters.status === 'Unpaid' ? 'selected' : ''}>Unpaid</option>
+                            <option value="Paid" ${localSharedFilters.status === 'Paid' ? 'selected' : ''}>Paid</option>
                         </select>
 
                         <select id="localRowsPerPage" onchange="changeLocalRowsPerPage()" style="padding: 8px 12px; border: 1px solid var(--border-color); border-radius: var(--radius-md); font-size: 0.9rem; background: var(--bg-body); color: var(--text-main);">
@@ -6626,8 +6627,16 @@ window.renderBoqChargingView = function() {
             renderLocalTable();
         };
 
+        window.updateLocalSharedFilter = function(filterName, value) {
+            if (!Object.prototype.hasOwnProperty.call(localSharedFilters, filterName)) return;
+            localSharedFilters[filterName] = value || '';
+            localCurrentPage = 1;
+            renderLocalTable();
+        };
+
         window.setLocalTab = function(tab) {
             currentLocalTab = tab;
+            localCurrentPage = 1;
             renderLocalView();
         };
 
@@ -6667,9 +6676,9 @@ window.renderBoqChargingView = function() {
             const statusFilter = document.getElementById('localStatusFilter');
             const categoryFilter = document.getElementById('localCategoryFilter');
             
-            const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
-            const statusVal = statusFilter ? statusFilter.value : '';
-            const categoryVal = categoryFilter ? categoryFilter.value : '';
+            const searchTerm = (localSharedFilters.search || (searchInput ? searchInput.value : '')).toLowerCase();
+            const statusVal = localSharedFilters.status || (statusFilter ? statusFilter.value : '');
+            const categoryVal = localSharedFilters.category || (categoryFilter ? categoryFilter.value : '');
 
             // Filter records
             let records = localRecords.filter(m => m.projectId === currentProjectId);
