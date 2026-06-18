@@ -9040,7 +9040,12 @@ window.loadManilaProcurementFromSupabase = async function() {
         actualAmount: Number(row.actual_amount || 0),
         actual_amount: Number(row.actual_amount || 0),
         neededDate: row.needed_date || '',
+        needed_date: row.needed_date || '',
+        paymentNeededDate: row.needed_date || '',
         paymentReleased: row.payment_released || '',
+        payment_released: row.payment_released || '',
+        paymentMonth: row.payment_month || '',
+        payment_month: row.payment_month || '',
         month: row.payment_month || '',
         paymentStatus: row.payment_status || 'Unpaid',
         payment_status: row.payment_status || 'Unpaid',
@@ -9115,10 +9120,16 @@ window.loadLocalProcurementFromSupabase = async function() {
         ewt: Number(row.ewt || 0),
         actualAmount: Number(row.actual_amount || 0),
         actual_amount: Number(row.actual_amount || 0),
-        paymentNeededDate: row.needed_date,
-        paymentReleased: row.payment_released,
-        paymentMonth: row.payment_month,
+        paymentNeededDate: row.needed_date || '',
+        neededDate: row.needed_date || '',
+        needed_date: row.needed_date || '',
+        paymentReleased: row.payment_released || '',
+        payment_released: row.payment_released || '',
+        paymentMonth: row.payment_month || '',
+        payment_month: row.payment_month || '',
+        month: row.payment_month || '',
         paymentStatus: row.payment_status || 'Unpaid',
+        payment_status: row.payment_status || 'Unpaid',
         concerns: row.concerns || '',
         created_by: row.created_by || null
     }));
@@ -10861,7 +10872,9 @@ if (
     const getPrsRecord = (r) => {
         const prsId = getPrsId(r);
         if (!prsId) return null;
-        return (window.prsRecords || prsRecords || []).find(p => String(p.id) === String(prsId)) || null;
+        return (window.prsRecords || prsRecords || []).find(
+            p => String(p.id) === String(prsId)
+        ) || null;
     };
 
     const getPrsNo = (r) => {
@@ -10875,10 +10888,16 @@ if (
         ).trim();
     };
 
+    const hasValidPrsNo = (r) => {
+        const prsNo = getPrsNo(r);
+        return Boolean(prsNo && prsNo !== '-' && normalize(prsNo) !== 'n/a');
+    };
+
     const getItem = (r) => {
         const prs = getPrsRecord(r);
         return String(
             r.item ||
+            r.itemParticulars ||
             r.item_particulars ||
             r.description ||
             r.activity_description ||
@@ -10904,12 +10923,14 @@ if (
     const getChargingNoteCode = (r) => String(
         r.chargingNoteCode ||
         r.charging_note_code ||
+        r.note ||
         ''
     ).trim();
 
     const getSubtaskCharging = (r) => String(
         r.subtaskCharging ||
         r.subtask_charging ||
+        r.subtask ||
         ''
     ).trim();
 
@@ -10932,6 +10953,24 @@ if (
         ''
     ).trim();
 
+    const getTargetDate = (r) => String(
+        r.targetDate ||
+        r.target_date ||
+        ''
+    ).trim();
+
+    const getDateDelivered = (r) => String(
+        r.dateDelivered ||
+        r.date_delivered ||
+        ''
+    ).trim();
+
+    const getRemarks = (r) => String(
+        r.remarks ||
+        r.concerns ||
+        ''
+    ).trim();
+
     const getPaymentStatus = (r) => String(
         r.paymentStatus ||
         r.payment_status ||
@@ -10941,8 +10980,30 @@ if (
     const getProcurementStatus = (r) => String(
         r.procurementStatus ||
         r.procurement_status ||
+        r.status ||
         ''
     ).trim();
+
+    const getTotalCost = (r) => {
+        const raw = r.totalCost ?? r.total_cost ?? 0;
+        const cleaned = String(raw).replace(/₱/g, '').replace(/,/g, '').trim();
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const getVatAmount = (r) => {
+        const raw = r.vatAmount ?? r.vat_amount ?? 0;
+        const cleaned = String(raw).replace(/₱/g, '').replace(/,/g, '').trim();
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const getEwt = (r) => {
+        const raw = r.ewt ?? r.ewtAmount ?? r.ewt_amount ?? 0;
+        const cleaned = String(raw).replace(/₱/g, '').replace(/,/g, '').trim();
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : 0;
+    };
 
     const getActualAmount = (r) => {
         const raw = r.actualAmount ?? r.actual_amount ?? r.actualAmountToPay ?? r.actual_amount_to_pay ?? 0;
@@ -10951,11 +11012,58 @@ if (
         return Number.isFinite(parsed) ? parsed : 0;
     };
 
+    const getPaymentTerms = (r) => String(
+        r.paymentTerms ||
+        r.payment_terms ||
+        r.termsPercent ||
+        r.terms_percent ||
+        ''
+    ).trim();
+
+    const getPaymentDate = (r) => String(
+        r.paymentReleased ||
+        r.payment_released ||
+        r.paymentDate ||
+        r.payment_date ||
+        ''
+    ).trim();
+
+    const getPaymentMonth = (r) => {
+        const saved = String(
+            r.paymentMonth ||
+            r.payment_month ||
+            r.month ||
+            ''
+        ).trim();
+
+        if (saved && saved !== '-' && normalize(saved) !== 'unspecified') {
+            return saved;
+        }
+
+        const dateValue = getPaymentDate(r);
+        if (!dateValue) return '';
+
+        const parsed = new Date(dateValue);
+        if (Number.isNaN(parsed.getTime())) return '';
+
+        return parsed.toLocaleDateString('en-US', {
+            month: 'long',
+            year: 'numeric'
+        }).replace(' ', ' - ');
+    };
+
     const formatCurrency = (value) => {
         return '₱' + Number(value || 0).toLocaleString('en-US', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         });
+    };
+
+    const formatDate = (value) => {
+        if (!value || value === '-') return '-';
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) return String(value);
+        return parsed.toLocaleDateString('en-CA');
     };
 
     const escapeHtml = (value) => {
@@ -11012,15 +11120,12 @@ if (
     const thStyle = 'padding: 12px 16px; border-bottom: 1px solid var(--border-color); color: var(--text-muted); font-size: 0.8rem; font-weight: 700; text-transform: uppercase; white-space: nowrap;';
 
     let records = (window.localRecords || localRecords || []).filter(r => {
-        return String(getProjectId(r)) === String(currentProjectId);
+        return String(getProjectId(r)) === String(window.currentProjectId || currentProjectId);
     });
 
+    // Supplies shows only PRS-linked records.
     if (currentLocalTab === 'supplies') {
-        records = records.filter(r => {
-            const categoryKey = normalizeCategory(getCategory(r));
-            const prs = getPrsRecord(r);
-            return categoryKey.includes('material') || !!prs || !!getPrsNo(r);
-        });
+        records = records.filter(hasValidPrsNo);
     }
 
     if (searchTerm) {
@@ -11039,7 +11144,11 @@ if (
                 getPoNo(r),
                 getSupplier(r),
                 getPaymentStatus(r),
-                getProcurementStatus(r)
+                getProcurementStatus(r),
+                getPaymentTerms(r),
+                getPaymentDate(r),
+                getPaymentMonth(r),
+                getRemarks(r)
             ].join(' ').toLowerCase();
 
             return combined.includes(searchTerm);
@@ -11094,54 +11203,89 @@ if (
         return parsedA.sequence - parsedB.sequence;
     });
 
-    if (currentLocalTab === 'budget') {
-        thead.innerHTML = `
+    const headerByTab = {
+        procurement: `
             <tr>
                 <th style="${thStyle}">PROCESS</th>
                 <th style="${thStyle}">CATEGORY</th>
                 <th style="${thStyle}">REPLE NO.</th>
                 <th style="${thStyle}">PRS NO.</th>
                 <th style="${thStyle}">ITEM/PARTICULARS</th>
+                <th style="${thStyle}">SUPPLIER</th>
+                <th style="${thStyle}">CHARGING CAT.</th>
+                <th style="${thStyle}">BOQ CHARGING</th>
+                <th style="${thStyle}">SUBTASK</th>
+                <th style="${thStyle}">WORK ITEM NO.</th>
+                <th style="${thStyle}">REMARKS</th>
+                <th style="${thStyle} text-align:center;">ACTION</th>
+            </tr>
+        `,
+        supplies: `
+            <tr>
+                <th style="${thStyle}">PROCESS</th>
+                <th style="${thStyle}">CATEGORY</th>
+                <th style="${thStyle}">REPLE NO.</th>
+                <th style="${thStyle}">PRS NO.</th>
+                <th style="${thStyle}">ITEM/PARTICULARS</th>
+                <th style="${thStyle}">PO NO.</th>
+                <th style="${thStyle}">SUPPLIER</th>
+                <th style="${thStyle}">TARGET DATE</th>
+                <th style="${thStyle}">DATE DELIVERED</th>
+                <th style="${thStyle}">STATUS</th>
+                <th style="${thStyle} text-align:center;">ACTION</th>
+            </tr>
+        `,
+        budget: `
+            <tr>
+                <th style="${thStyle}">REPLE NO.</th>
+                <th style="${thStyle}">PRS NO.</th>
+                <th style="${thStyle}">SUPPLIER</th>
+                <th style="${thStyle}">TOTAL COST</th>
+                <th style="${thStyle}">VAT</th>
+                <th style="${thStyle}">EWT</th>
                 <th style="${thStyle}">ACTUAL AMOUNT</th>
+                <th style="${thStyle}">PAYMENT TERMS</th>
+                <th style="${thStyle}">PAYMENT DATE</th>
+                <th style="${thStyle}">PAYMENT MONTH</th>
                 <th style="${thStyle}">PAYMENT STATUS</th>
                 <th style="${thStyle} text-align:center;">ACTION</th>
             </tr>
-        `;
-    } else {
-        thead.innerHTML = `
-            <tr>
-                <th style="${thStyle}">PROCESS</th>
-                <th style="${thStyle}">CATEGORY</th>
-                <th style="${thStyle}">REPLE NO.</th>
-                <th style="${thStyle}">PRS NO.</th>
-                <th style="${thStyle}">ITEM/PARTICULARS</th>
-                <th style="${thStyle}">CHARGING CAT.</th>
-                <th style="${thStyle}">BOQ CHARGING</th>
-                <th style="${thStyle}">NOTE</th>
-                <th style="${thStyle}">SUBTASK</th>
-                <th style="${thStyle}">WORK ITEM NO.</th>
-                <th style="${thStyle} text-align:center;">ACTION</th>
-            </tr>
-        `;
-    }
+        `
+    };
+
+    thead.innerHTML = headerByTab[currentLocalTab] || headerByTab.procurement;
+
+    const columnCountByTab = {
+        procurement: 12,
+        supplies: 11,
+        budget: 12
+    };
 
     const totalRecords = records.length;
-    const rowsPerPage = localRowsPerPageValue === 'all' ? totalRecords || 1 : Number(localRowsPerPageValue || 10);
+    const rowsPerPage = localRowsPerPageValue === 'all'
+        ? totalRecords || 1
+        : Number(localRowsPerPageValue || 10);
     const totalPages = Math.max(1, Math.ceil(totalRecords / rowsPerPage));
 
     if (localCurrentPage > totalPages) localCurrentPage = totalPages;
     if (localCurrentPage < 1) localCurrentPage = 1;
 
-    const startIndex = localRowsPerPageValue === 'all' ? 0 : (localCurrentPage - 1) * rowsPerPage;
+    const startIndex = localRowsPerPageValue === 'all'
+        ? 0
+        : (localCurrentPage - 1) * rowsPerPage;
     const paginatedRecords = localRowsPerPageValue === 'all'
         ? records
         : records.slice(startIndex, startIndex + rowsPerPage);
 
     if (paginatedRecords.length === 0) {
+        const emptyMessage = currentLocalTab === 'supplies'
+            ? 'No PRS-linked supplies records found.'
+            : 'No local records found.';
+
         tbody.innerHTML = `
             <tr>
-                <td colspan="${currentLocalTab === 'budget' ? 8 : 11}" style="padding: 32px; text-align: center; color: var(--text-muted);">
-                    No local records found.
+                <td colspan="${columnCountByTab[currentLocalTab] || 11}" style="padding: 32px; text-align: center; color: var(--text-muted);">
+                    ${emptyMessage}
                 </td>
             </tr>
         `;
@@ -11151,38 +11295,87 @@ if (
             const category = getCategory(r);
             const process = getProcess(r);
             const paymentStatus = getPaymentStatus(r);
-            const statusType = normalize(paymentStatus) === 'paid' ? 'success' : 'warning';
+            const procurementStatus = getProcurementStatus(r) || '-';
+            const paymentStatusType = normalize(paymentStatus) === 'paid' ? 'success' : 'warning';
+            const procurementStatusType = ['delivered', 'completed'].includes(normalize(procurementStatus))
+                ? 'success'
+                : ['cancelled', 'delayed'].includes(normalize(procurementStatus))
+                    ? 'danger'
+                    : 'neutral';
 
-            if (currentLocalTab === 'budget') {
+            if (currentLocalTab === 'procurement') {
                 return `
                     <tr>
                         <td style="${cellStyle}">${badgeHtml(process || '-', 'info')}</td>
                         <td style="${cellStyle}">${badgeHtml(category || '-', 'warning')}</td>
                         <td style="${cellStyle} font-weight: 700;">${escapeHtml(getRepleNo(r) || '-')}</td>
-                        <td style="${cellStyle}">${escapeHtml(getPrsNo(r) || '-')}</td>
-                        <td style="${cellStyle}; min-width: 260px;">${escapeHtml(getItem(r) || '-')}</td>
-                        <td style="${cellStyle} font-weight: 700;">${formatCurrency(getActualAmount(r))}</td>
-                        <td style="${cellStyle}">${badgeHtml(paymentStatus || 'Unpaid', statusType)}</td>
+                        <td style="${cellStyle} font-weight: 600;">${escapeHtml(getPrsNo(r) || '-')}</td>
+                        <td style="${cellStyle} min-width: 300px;">${escapeHtml(getItem(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getSupplier(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getChargingCategory(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getBoqCharging(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getSubtaskCharging(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getWorkItemNo(r) || '-')}</td>
+                        <td style="${cellStyle} min-width: 220px;">${escapeHtml(getRemarks(r) || '-')}</td>
                         <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
                     </tr>
                 `;
             }
 
-            return `
+            if (currentLocalTab === 'budget') {
+                return `
+                    <tr>
+                        <td style="${cellStyle} font-weight: 700;">${escapeHtml(getRepleNo(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getPrsNo(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getSupplier(r) || '-')}</td>
+                        <td style="${cellStyle} font-weight: 600;">${formatCurrency(getTotalCost(r))}</td>
+                        <td style="${cellStyle}">${formatCurrency(getVatAmount(r))}</td>
+                        <td style="${cellStyle}">${formatCurrency(getEwt(r))}</td>
+                        <td style="${cellStyle} font-weight: 700;">${formatCurrency(getActualAmount(r))}</td>
+                        <td style="${cellStyle}">${escapeHtml(getPaymentTerms(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(formatDate(getPaymentDate(r)))}</td>
+                        <td style="${cellStyle}">${escapeHtml(getPaymentMonth(r) || '-')}</td>
+                        <td style="${cellStyle}">${badgeHtml(paymentStatus || 'Unpaid', paymentStatusType)}</td>
+                        <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
+                    </tr>
+                `;
+            }
+
+            if (currentLocalTab === 'supplies') {
+                return `
                 <tr>
                     <td style="${cellStyle}">${badgeHtml(process || '-', 'info')}</td>
                     <td style="${cellStyle}">${badgeHtml(category || '-', 'warning')}</td>
                     <td style="${cellStyle} font-weight: 700;">${escapeHtml(getRepleNo(r) || '-')}</td>
                     <td style="${cellStyle}">${escapeHtml(getPrsNo(r) || '-')}</td>
-                    <td style="${cellStyle}; min-width: 320px;">${escapeHtml(getItem(r) || '-')}</td>
-                    <td style="${cellStyle}">${escapeHtml(getChargingCategory(r) || '-')}</td>
-                    <td style="${cellStyle}">${escapeHtml(getBoqCharging(r) || '-')}</td>
-                    <td style="${cellStyle}">${escapeHtml(getChargingNoteCode(r) || '-')}</td>
-                    <td style="${cellStyle}">${escapeHtml(getSubtaskCharging(r) || '-')}</td>
-                    <td style="${cellStyle}">${escapeHtml(getWorkItemNo(r) || '-')}</td>
+                    <td style="${cellStyle} min-width: 300px;">${escapeHtml(getItem(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getPoNo(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(getSupplier(r) || '-')}</td>
+                    <td style="${cellStyle}">${escapeHtml(formatDate(getTargetDate(r)))}</td>
+                    <td style="${cellStyle}">${escapeHtml(formatDate(getDateDelivered(r)))}</td>
+                    <td style="${cellStyle}">${badgeHtml(procurementStatus, procurementStatusType)}</td>
                     <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
                 </tr>
-            `;
+                `;
+
+            }
+
+            return `
+                    <tr>
+                        <td style="${cellStyle}">${badgeHtml(process || '-', 'info')}</td>
+                        <td style="${cellStyle}">${badgeHtml(category || '-', 'warning')}</td>
+                        <td style="${cellStyle} font-weight: 700;">${escapeHtml(getRepleNo(r) || '-')}</td>
+                        <td style="${cellStyle} font-weight: 600;">${escapeHtml(getPrsNo(r) || '-')}</td>
+                        <td style="${cellStyle} min-width: 300px;">${escapeHtml(getItem(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getSupplier(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getChargingCategory(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getBoqCharging(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getSubtaskCharging(r) || '-')}</td>
+                        <td style="${cellStyle}">${escapeHtml(getWorkItemNo(r) || '-')}</td>
+                        <td style="${cellStyle} min-width: 220px;">${escapeHtml(getRemarks(r) || '-')}</td>
+                        <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
+                    </tr>
+                `;
         }).join('');
     }
 
@@ -11202,8 +11395,13 @@ if (
     const prevBtn = document.getElementById('localPrevBtn');
     const nextBtn = document.getElementById('localNextBtn');
 
-    if (prevBtn) prevBtn.disabled = localCurrentPage <= 1 || localRowsPerPageValue === 'all';
-    if (nextBtn) nextBtn.disabled = localCurrentPage >= totalPages || localRowsPerPageValue === 'all';
+    if (prevBtn) {
+        prevBtn.disabled = localCurrentPage <= 1 || localRowsPerPageValue === 'all';
+    }
+
+    if (nextBtn) {
+        nextBtn.disabled = localCurrentPage >= totalPages || localRowsPerPageValue === 'all';
+    }
 };
 
         window.duplicateLocalRecord = function(id) {
@@ -11739,7 +11937,7 @@ if (typeof closeLocalModal === 'function') {
             localRecords.push(newLocalRecord);
         }
 
-        window.renderExpenseOverview = function() {
+        window.renderExpenseOverview = async function() {
             if (!currentProjectId) return;
             currentView = 'expense-overview';
             updateSubNavVisibility();
@@ -11849,8 +12047,107 @@ if (typeof closeLocalModal === 'function') {
                 </div>
             `;
             
-            populateExpenseMonthFilter();
-            renderExpenseDashboard();
+            const activeExpenseProjectId = String(
+                window.currentProjectId || currentProjectId || ''
+            ).trim();
+
+            if (!activeExpenseProjectId) {
+                const noProjectMessage = `
+                    <tr>
+                        <td colspan="9" style="padding:24px;text-align:center;color:var(--danger);">
+                            No project is currently selected.
+                        </td>
+                    </tr>
+                `;
+                const manilaBody = document.getElementById('expenseManilaTableBody');
+                const localBody = document.getElementById('expenseLocalTableBody');
+                const summaryBody = document.getElementById('expenseSummaryTableBody');
+                if (manilaBody) manilaBody.innerHTML = noProjectMessage;
+                if (localBody) localBody.innerHTML = noProjectMessage;
+                if (summaryBody) summaryBody.innerHTML = noProjectMessage.replace('colspan="9"', 'colspan="4"');
+                return;
+            }
+
+            window.currentProjectId = activeExpenseProjectId;
+            currentProjectId = activeExpenseProjectId;
+
+            const loadingRow = `
+                <tr>
+                    <td colspan="9" style="padding:24px;text-align:center;color:var(--text-muted);">
+                        Loading expense records...
+                    </td>
+                </tr>
+            `;
+
+            const manilaBody = document.getElementById('expenseManilaTableBody');
+            const localBody = document.getElementById('expenseLocalTableBody');
+            const summaryBody = document.getElementById('expenseSummaryTableBody');
+            const chartContainer = document.getElementById('expenseChartContainer');
+
+            if (manilaBody) manilaBody.innerHTML = loadingRow;
+            if (localBody) localBody.innerHTML = loadingRow;
+            if (summaryBody) {
+                summaryBody.innerHTML = loadingRow.replace('colspan="9"', 'colspan="4"');
+            }
+            if (chartContainer) {
+                chartContainer.innerHTML = '<div style="text-align:center;color:var(--text-muted);">Loading chart...</div>';
+            }
+
+            try {
+                const loaders = [];
+
+                if (typeof window.loadManilaProcurementFromSupabase === 'function') {
+                    loaders.push(window.loadManilaProcurementFromSupabase());
+                }
+
+                if (typeof window.loadLocalProcurementFromSupabase === 'function') {
+                    loaders.push(window.loadLocalProcurementFromSupabase());
+                }
+
+                await Promise.all(loaders);
+
+                manilaRecords = Array.isArray(window.manilaRecords)
+                    ? window.manilaRecords
+                    : Array.isArray(manilaRecords)
+                        ? manilaRecords
+                        : [];
+
+                localRecords = Array.isArray(window.localRecords)
+                    ? window.localRecords
+                    : Array.isArray(localRecords)
+                        ? localRecords
+                        : [];
+
+                window.manilaRecords = manilaRecords;
+                window.localRecords = localRecords;
+
+                console.log('EXPENSE OVERVIEW PROJECT:', activeExpenseProjectId);
+                console.log('EXPENSE OVERVIEW MANILA RECORDS:', manilaRecords);
+                console.log('EXPENSE OVERVIEW LOCAL RECORDS:', localRecords);
+
+                populateExpenseMonthFilter();
+                renderExpenseDashboard();
+            } catch (error) {
+                console.error('Failed to load Expense Overview:', error);
+
+                const message = error?.message || 'Failed to load expense records.';
+                const errorRow = `
+                    <tr>
+                        <td colspan="9" style="padding:24px;text-align:center;color:var(--danger);">
+                            ${message}
+                        </td>
+                    </tr>
+                `;
+
+                if (manilaBody) manilaBody.innerHTML = errorRow;
+                if (localBody) localBody.innerHTML = errorRow;
+                if (summaryBody) {
+                    summaryBody.innerHTML = errorRow.replace('colspan="9"', 'colspan="4"');
+                }
+                if (chartContainer) {
+                    chartContainer.innerHTML = `<div style="text-align:center;color:var(--danger);">${message}</div>`;
+                }
+            }
         };
 
 
@@ -12899,18 +13196,82 @@ if (typeof closeLocalModal === 'function') {
             initLookAheadModal();
         }
 
-        window.populateExpenseMonthFilter = function() {
+        window.getExpenseMonthYear = function(record) {
+    if (!record || typeof record !== 'object') return 'Unspecified';
+
+    const monthNames = [
+        'January', 'February', 'March', 'April', 'May', 'June',
+        'July', 'August', 'September', 'October', 'November', 'December'
+    ];
+
+    const normalizeMonthYear = (value) => {
+        const raw = String(value || '').trim();
+        if (!raw || raw === '-' || raw.toLowerCase() === 'unspecified') return '';
+
+        const directMatch = raw.match(/^([A-Za-z]+)\s*[-–—/]\s*(\d{4})$/);
+        if (directMatch) {
+            const monthIndex = monthNames.findIndex(
+                month => month.toLowerCase() === directMatch[1].toLowerCase()
+            );
+            if (monthIndex >= 0) return `${monthNames[monthIndex]} - ${directMatch[2]}`;
+        }
+
+        const yearMonthMatch = raw.match(/^(\d{4})-(\d{1,2})$/);
+        if (yearMonthMatch) {
+            const monthIndex = Number(yearMonthMatch[2]) - 1;
+            if (monthIndex >= 0 && monthIndex < 12) {
+                return `${monthNames[monthIndex]} - ${yearMonthMatch[1]}`;
+            }
+        }
+
+        const parsed = new Date(raw);
+        if (!Number.isNaN(parsed.getTime())) {
+            return `${monthNames[parsed.getMonth()]} - ${parsed.getFullYear()}`;
+        }
+
+        return raw;
+    };
+
+    const savedMonth = normalizeMonthYear(
+        record.paymentMonth ||
+        record.payment_month ||
+        record.month ||
+        ''
+    );
+
+    if (savedMonth) return savedMonth;
+
+    const possibleDates = [
+        record.paymentDate,
+        record.payment_date,
+        record.paymentReleased,
+        record.payment_released,
+        record.releaseDate,
+        record.release_date,
+        record.paymentNeededDate,
+        record.neededDate,
+        record.needed_date,
+        record.prsDate,
+        record.prs_date,
+        record.createdAt,
+        record.created_at
+    ];
+
+    for (const value of possibleDates) {
+        const monthYear = normalizeMonthYear(value);
+        if (monthYear) return monthYear;
+    }
+
+    return 'Unspecified';
+};
+
+window.populateExpenseMonthFilter = function() {
     const filter = document.getElementById('expenseMonthFilter');
     if (!filter) return;
 
     const months = new Set();
 
-    const getMonth = (record) => String(
-        record.paymentMonth ||
-        record.payment_month ||
-        record.month ||
-        ''
-    ).trim();
+    const getMonth = (record) => window.getExpenseMonthYear(record);
 
     const processRecords = (records) => {
         (records || []).forEach(r => {
@@ -13001,12 +13362,9 @@ window.renderExpenseDashboard = function() {
     };
 
     const getPaymentMonth = (record) => {
-        return String(
-            record.paymentMonth ||
-            record.payment_month ||
-            record.month ||
-            ''
-        ).trim();
+        return typeof window.getExpenseMonthYear === 'function'
+            ? window.getExpenseMonthYear(record)
+            : 'Unspecified';
     };
 
     const getPaymentDate = (record) => {
@@ -13092,8 +13450,8 @@ window.renderExpenseDashboard = function() {
 
 
     if (filterMonth !== 'all') {
-        mnlRecords = mnlRecords.filter(r => (getPaymentMonth(r) || 'Unspecified') === filterMonth);
-        lclRecords = lclRecords.filter(r => (getPaymentMonth(r) || 'Unspecified') === filterMonth);
+        mnlRecords = mnlRecords.filter(r => getPaymentMonth(r) === filterMonth);
+        lclRecords = lclRecords.filter(r => getPaymentMonth(r) === filterMonth);
     }
 
     let totalPaid = 0;
@@ -13158,7 +13516,7 @@ window.renderExpenseDashboard = function() {
 
         const processMonthTotals = (records) => {
             records.forEach(r => {
-                const month = getPaymentMonth(r) || 'Unspecified';
+                const month = getPaymentMonth(r);
 
                 if (!monthTotals[month]) {
                     monthTotals[month] = { paid: 0, unpaid: 0 };
@@ -13311,7 +13669,7 @@ window.renderExpenseDashboard = function() {
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${itemDesc}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.supplier || '-'}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatDate(getPaymentDate(r))}</td>
-                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${getPaymentMonth(r) || 'Unspecified'}</td>
+                        <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${getPaymentMonth(r)}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${formatCurrency(getActualAmount(r))}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${r.paymentTerms || r.payment_terms || '-'}</td>
                         <td style="padding: 12px 16px; border-bottom: 1px solid var(--border-color);">${getCharging(r) || '-'}</td>
