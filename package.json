@@ -20,6 +20,7 @@
     "dom-to-image-more": "^3.7.2",
     "dotenv": "^17.2.3",
     "framer-motion": "^12.38.0",
+    "googleapis": "^173.0.0",
     "html-to-image": "^1.11.13",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",

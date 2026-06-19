@@ -86,6 +86,8 @@ export function ReportEmailPanel({ selectedReports, userId }: Props) {
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   const [groupName, setGroupName] = useState("");
   const [groupEmailsInput, setGroupEmailsInput] = useState("");
+  const [groupEditorError, setGroupEditorError] = useState("");
+  const [isSavingGroup, setIsSavingGroup] = useState(false);
 
   const projectIds = useMemo(
     () =>
@@ -170,6 +172,7 @@ export function ReportEmailPanel({ selectedReports, userId }: Props) {
     setEditingGroupId(null);
     setGroupName("");
     setGroupEmailsInput("");
+    setGroupEditorError("");
     setShowGroupEditor(true);
   };
 
@@ -177,57 +180,86 @@ export function ReportEmailPanel({ selectedReports, userId }: Props) {
     setEditingGroupId(group.id);
     setGroupName(group.group_name);
     setGroupEmailsInput(group.email_addresses.join("; "));
+    setGroupEditorError("");
     setShowGroupEditor(true);
   };
 
   const saveGroup = async () => {
     const supabase = getSupabase();
-    if (!supabase || !userId) return;
-    const emails = normalizeEmails(groupEmailsInput);
-    const invalid = emails.filter((email) => !EMAIL_PATTERN.test(email));
-    if (!groupName.trim()) {
-      setValidationError("Email group name is required.");
+    if (!supabase) {
+      setGroupEditorError("Supabase is not available. Refresh the page and try again.");
       return;
     }
-    if (!emails.length || invalid.length) {
-      setValidationError(
-        invalid.length
-          ? `Invalid email address${invalid.length > 1 ? "es" : ""}: ${invalid.join(", ")}`
-          : "Add at least one valid email address to the group."
+    if (!userId) {
+      setGroupEditorError("You must be signed in to save an email group.");
+      return;
+    }
+
+    const emails = normalizeEmails(groupEmailsInput);
+    const invalid = emails.filter((email) => !EMAIL_PATTERN.test(email));
+
+    if (!groupName.trim()) {
+      setGroupEditorError("Email group name is required.");
+      return;
+    }
+    if (!emails.length) {
+      setGroupEditorError("Add at least one valid email address to the group.");
+      return;
+    }
+    if (invalid.length) {
+      setGroupEditorError(
+        `Invalid email address${invalid.length > 1 ? "es" : ""}: ${invalid.join(", ")}`
       );
       return;
     }
-
-    const payload = {
-      project_id: selectedProjectId ? Number(selectedProjectId) : null,
-      group_name: groupName.trim(),
-      email_addresses: emails,
-      created_by: userId,
-    };
-    const response = editingGroupId
-      ? await supabase
-          .from("report_email_groups")
-          .update({
-            group_name: payload.group_name,
-            email_addresses: payload.email_addresses,
-            project_id: payload.project_id,
-          })
-          .eq("id", editingGroupId)
-          .select()
-          .single()
-      : await supabase
-          .from("report_email_groups")
-          .insert(payload)
-          .select()
-          .single();
-
-    if (response.error) {
-      setValidationError(response.error.message);
+    if (!selectedProjectId) {
+      setGroupEditorError("Select exactly one project before saving an email group.");
       return;
     }
-    setShowGroupEditor(false);
-    setValidationError("");
-    await loadGroups();
+
+    setIsSavingGroup(true);
+    setGroupEditorError("");
+
+    try {
+      const payload = {
+        // projects.id is UUID, so keep the value as a string.
+        project_id: selectedProjectId,
+        group_name: groupName.trim(),
+        email_addresses: emails,
+        created_by: userId,
+      };
+
+      const response = editingGroupId
+        ? await supabase
+            .from("report_email_groups")
+            .update({
+              group_name: payload.group_name,
+              email_addresses: payload.email_addresses,
+              project_id: payload.project_id,
+            })
+            .eq("id", editingGroupId)
+            .select()
+            .single()
+        : await supabase
+            .from("report_email_groups")
+            .insert(payload)
+            .select()
+            .single();
+
+      if (response.error) {
+        setGroupEditorError(response.error.message);
+        return;
+      }
+
+      setShowGroupEditor(false);
+      setValidationError("");
+      setGroupEditorError("");
+      await loadGroups();
+    } catch (error) {
+      setGroupEditorError(error instanceof Error ? error.message : "Failed to save the email group.");
+    } finally {
+      setIsSavingGroup(false);
+    }
   };
 
   const deleteGroup = async (group: EmailGroup) => {
@@ -330,7 +362,7 @@ export function ReportEmailPanel({ selectedReports, userId }: Props) {
       const failures = Array.isArray(result?.failures) ? result.failures : [];
 
       await saveHistory({
-        project_id: selectedProjectId ? Number(selectedProjectId) : null,
+        project_id: selectedProjectId || null,
         report_name:
           selectedReports.length === 1
             ? selectedReports[0].report_title
@@ -360,7 +392,7 @@ export function ReportEmailPanel({ selectedReports, userId }: Props) {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       await saveHistory({
-        project_id: selectedProjectId ? Number(selectedProjectId) : null,
+        project_id: selectedProjectId || null,
         report_name:
           selectedReports.length === 1
             ? selectedReports[0].report_title
@@ -502,13 +534,18 @@ export function ReportEmailPanel({ selectedReports, userId }: Props) {
           <div className="w-full max-w-lg rounded-xl bg-white dark:bg-[#1d2125] p-5 shadow-xl space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="font-bold">{editingGroupId ? "Edit email group" : "Create email group"}</h3>
-              <button onClick={() => setShowGroupEditor(false)}><X size={18} /></button>
+              <button type="button" onClick={() => setShowGroupEditor(false)}><X size={18} /></button>
             </div>
             <input value={groupName} onChange={(event) => setGroupName(event.target.value)} placeholder="Group name" className="h-10 w-full px-3 rounded-md border bg-transparent" />
             <textarea value={groupEmailsInput} onChange={(event) => setGroupEmailsInput(event.target.value)} placeholder="Separate emails with commas, semicolons, or new lines" rows={5} className="w-full px-3 py-2 rounded-md border bg-transparent" />
+            {groupEditorError && (
+              <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {groupEditorError}
+              </div>
+            )}
             <div className="flex justify-end gap-2">
-              <button onClick={() => setShowGroupEditor(false)} className="px-4 py-2 rounded-md border">Cancel</button>
-              <button onClick={saveGroup} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white"><Save size={16} /> Save Group</button>
+              <button type="button" onClick={() => setShowGroupEditor(false)} disabled={isSavingGroup} className="px-4 py-2 rounded-md border disabled:opacity-60">Cancel</button>
+              <button type="button" onClick={saveGroup} disabled={isSavingGroup} className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white disabled:opacity-60 disabled:cursor-not-allowed"><Save size={16} /> {isSavingGroup ? "Saving..." : "Save Group"}</button>
             </div>
           </div>
         </div>
