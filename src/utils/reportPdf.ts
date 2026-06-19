@@ -47,9 +47,9 @@ const PAGE_LAYOUT = {
   rightMargin: 10,
   topMargin: 8,
   bottomMargin: 9,
-  headerImageHeight: 22,
-  headerTextHeight: 12,
-  headerGap: 4,
+  headerImageHeight: 13.5,
+  headerTextHeight: 11,
+  headerGap: 3.5,
   footerHeight: 7,
 };
 
@@ -412,13 +412,23 @@ function drawReportHeader(
 
   if (options.headerImageDataUrl) {
     try {
+      const imageRatio = 749 / 83;
+      const maxHeaderWidth = availableWidth * 0.58;
+      const maxHeaderHeight = PAGE_LAYOUT.headerImageHeight;
+      let headerWidth = maxHeaderWidth;
+      let headerHeight = headerWidth / imageRatio;
+      if (headerHeight > maxHeaderHeight) {
+        headerHeight = maxHeaderHeight;
+        headerWidth = headerHeight * imageRatio;
+      }
+      const headerX = (options.pageWidth - headerWidth) / 2;
       pdf.addImage(
         options.headerImageDataUrl,
         "JPEG",
-        left,
+        headerX,
         top,
-        availableWidth,
-        PAGE_LAYOUT.headerImageHeight,
+        headerWidth,
+        headerHeight,
         undefined,
         "FAST"
       );
@@ -427,7 +437,7 @@ function drawReportHeader(
     }
   }
 
-  const textTop = top + PAGE_LAYOUT.headerImageHeight + 4;
+  const textTop = top + PAGE_LAYOUT.headerImageHeight + 2.5;
   pdf.setTextColor(15, 23, 42);
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(8);
@@ -641,7 +651,8 @@ export async function generateReportPdf(
         pdf = page.pdf;
         const { layout } = page;
         const pixelsPerMillimeter = canvas.width / layout.availableWidth;
-        const fullPageHeightPx = Math.max(1, Math.floor(layout.availableHeight * pixelsPerMillimeter));
+        const safetyMm = 3.5;
+        const fullPageHeightPx = Math.max(1, Math.floor((layout.availableHeight - safetyMm) * pixelsPerMillimeter));
         const activeHeader = sectionPageIndex > 0 ? findActiveTableHeader(tableRegions, sourceY) : null;
         const repeatedHeight = activeHeader?.height || 0;
         const maximumEnd = Math.min(
@@ -650,6 +661,10 @@ export async function generateReportPdf(
         );
         let endY = findPageEnd({ sourceY, maximumEnd, safeBreaks, canvasHeight: canvas.height });
         if (endY <= sourceY + 4) endY = maximumEnd;
+        if (endY < canvas.height) {
+          const nextBreak = safeBreaks.find((value) => value >= endY && value - endY <= 8);
+          if (nextBreak) endY = Math.min(canvas.height, nextBreak + 2);
+        }
 
         const sliceHeight = Math.max(1, Math.ceil(endY - sourceY));
         const pageCanvas = document.createElement("canvas");
@@ -700,7 +715,7 @@ export async function generateReportPdf(
           PAGE_LAYOUT.leftMargin,
           layout.contentTop,
           layout.availableWidth,
-          layout.availableHeight,
+          Math.min(layout.availableHeight, pageCanvas.height / pixelsPerMillimeter),
           undefined,
           "FAST"
         );

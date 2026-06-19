@@ -1655,17 +1655,26 @@ function buildCapturedReportHTML(params: {
           .wbs-checklist-report .wbs-level-1 { padding-left: 14px !important; font-weight: 700 !important; }
           .wbs-checklist-report .wbs-level-2 { padding-left: 24px !important; }
           .wbs-checklist-report .wbs-level-3 { padding-left: 34px !important; }
+          .wbs-status-cell {
+            text-align: center !important;
+            vertical-align: middle !important;
+            padding-top: 3px !important;
+            padding-bottom: 3px !important;
+          }
           .status-pill {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
             min-width: 72px !important;
+            height: 18px !important;
             border-radius: 999px !important;
-            padding: 2px 7px !important;
+            padding: 0 7px !important;
             white-space: nowrap !important;
             font-size: 7.4px !important;
             font-weight: 800 !important;
-            line-height: 1.2 !important;
+            line-height: 1 !important;
+            vertical-align: middle !important;
+            box-sizing: border-box !important;
           }
           .status-completed { background: #dcfce7 !important; color: #166534 !important; border: 1px solid #86efac !important; }
           .status-in-progress { background: #dbeafe !important; color: #1d4ed8 !important; border: 1px solid #93c5fd !important; }
@@ -2035,10 +2044,6 @@ function buildMaterialsDashboardReport(projectName?: string): string {
         <h3>Low Stock / Out of Stock Items</h3>
         ${renderReportTable(["Item Code", "Item Name", "Department", "Type", "Current Stock", "Minimum Stock", "Unit", "Status"], toRows(lowStock), "No transaction-backed low-stock or out-of-stock items.")}
       </div>
-      <div class="materials-report-panel materials-stock-note" data-report-item="true">
-        <h3>Fully Stocked Summary</h3>
-        <p><strong>${fullyStocked.length}</strong> transaction-backed items are fully stocked. The detailed masterlist is intentionally excluded from the dashboard report so the output matches the dashboard view and stays concise.</p>
-      </div>
     </div>`;
 }
 
@@ -2097,7 +2102,7 @@ function buildWbsChecklistSourceReport(projectName?: string): string {
         <tr data-report-row="true">
           <td>-</td>
           <td class="wbs-task-title level-1">${escapeHTML([group.phase, group.category, group.parentTask].filter(Boolean).join(" / "))}</td>
-          <td><span class="status-pill status-not-yet-started">Not Yet Started</span></td>
+          <td class="wbs-status-cell"><span class="status-pill status-not-yet-started">Not Yet Started</span></td>
           <td>-</td>
           <td>${group.count} item${group.count === 1 ? "" : "s"}</td>
         </tr>`).join("");
@@ -2135,7 +2140,7 @@ function buildWbsChecklistSourceReport(projectName?: string): string {
       body.push(`<tr data-report-row="true">
         <td>${escapeHTML(row.code || "-")}</td>
         <td class="wbs-task-title level-3">${escapeHTML(row.title)}</td>
-        <td><span class="status-pill status-${row.status.toLowerCase().replace(/\s+/g, "-")}">${escapeHTML(row.status)}</span></td>
+        <td class="wbs-status-cell"><span class="status-pill status-${row.status.toLowerCase().replace(/\s+/g, "-")}">${escapeHTML(row.status)}</span></td>
         <td>${escapeHTML(row.assignee || "-")}</td>
         <td>${escapeHTML(row.dueDate || "-")}</td>
       </tr>`);
@@ -2349,15 +2354,6 @@ export async function generateFullModuleReport(
 
     await capturePage({ pageId: "fuel", title: "Fuel", orientation: "landscape" });
     await capturePage({ pageId: "project-schedule", title: "Project Schedule", orientation: "landscape" });
-    await capturePage({
-      pageId: "coordination",
-      title: "Coordination",
-      prepare: async () => {
-        await waitForActivePageReady({ timeoutMs: 18000, disallowText: ["loading project schedule", "loading"] });
-      },
-      transformClone: transformCoordination,
-      orientation: "landscape",
-    });
     params.setActivePage("wbs-sequence");
     await delay(1200);
     sections.push({
