@@ -15,6 +15,7 @@ import {
 import { PageContainer } from "../../components/layout/PageContainer";
 import { ReportEmailPanel } from "../../components/reports/ReportEmailPanel";
 import { useAccess } from "../../lib/accessControl";
+import { generateReportPdf } from "../../utils/reportPdf";
 
 type ReportScope = "page" | "module" | "merged" | string;
 
@@ -243,27 +244,48 @@ export default function ReportsNotificationsPage() {
     previewWindow.document.close();
   };
 
-  const printReport = (report: GeneratedReport) => {
+  const createReportPdf = async (report: GeneratedReport) => {
     if (!report.report_html) {
-      alert("This report has no saved HTML preview.");
-      return;
+      throw new Error("This report has no saved HTML preview.");
     }
+    return generateReportPdf(report.report_html, report.report_title);
+  };
 
-    const printWindow = window.open("", "_blank", "width=1200,height=800");
-
-    if (!printWindow) {
-      alert("Please allow pop-ups to print the report.");
-      return;
+  const printReport = async (report: GeneratedReport) => {
+    try {
+      setStatusMessage("Preparing PDF...");
+      const generated = await createReportPdf(report);
+      const url = URL.createObjectURL(generated.blob);
+      const pdfWindow = window.open(url, "_blank", "noopener,noreferrer");
+      if (!pdfWindow) {
+        URL.revokeObjectURL(url);
+        throw new Error("Please allow pop-ups to open the generated PDF.");
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setStatusMessage("");
+    } catch (error) {
+      console.error("[Reports] PDF print error:", error);
+      setStatusMessage(error instanceof Error ? error.message : "Failed to generate PDF.");
     }
+  };
 
-    printWindow.document.open();
-    printWindow.document.write(report.report_html);
-    printWindow.document.close();
-
-    setTimeout(() => {
-      printWindow.focus();
-      printWindow.print();
-    }, 700);
+  const downloadReportPdf = async (report: GeneratedReport) => {
+    try {
+      setStatusMessage("Preparing PDF download...");
+      const generated = await createReportPdf(report);
+      const url = URL.createObjectURL(generated.blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = generated.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatusMessage("");
+    } catch (error) {
+      console.error("[Reports] PDF download error:", error);
+      setStatusMessage(error instanceof Error ? error.message : "Failed to download PDF.");
+    }
   };
 
   const deleteReport = async (report: GeneratedReport) => {
@@ -905,9 +927,17 @@ const mergedTitle =
                                   <button
                                     onClick={() => printReport(report)}
                                     className="p-2 rounded-md text-gray-500 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
-                                    title="Print report"
+                                    title="Open generated PDF"
                                   >
                                     <Printer size={16} />
+                                  </button>
+
+                                  <button
+                                    onClick={() => downloadReportPdf(report)}
+                                    className="p-2 rounded-md text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                    title="Download PDF"
+                                  >
+                                    <Download size={16} />
                                   </button>
 
                                   <button

@@ -76,6 +76,12 @@ export default function WbsChecklistPage() {
   const [expandedNodes, setExpandedNodes] = useState<Record<string, boolean>>(
     {}
   );
+  const [fullReportMode, setFullReportMode] = useState(false);
+  const reportRestoreRef = React.useRef<{
+    searchQuery: string;
+    phaseFilter: string;
+    expandedNodes: Record<string, boolean>;
+  } | null>(null);
   const [editingItem, setEditingItem] = useState<DbChecklistItem | null>(null);
 
   const [addingTaskUnder, setAddingTaskUnder] = useState<{
@@ -180,6 +186,36 @@ export default function WbsChecklistPage() {
     waitForProjectAndLoad();
   }, []);
 
+  useEffect(() => {
+    const handlePrepareFullReport = (event: Event) => {
+      const enabled = Boolean((event as CustomEvent<{ enabled?: boolean }>).detail?.enabled);
+
+      if (enabled) {
+        reportRestoreRef.current = {
+          searchQuery,
+          phaseFilter,
+          expandedNodes,
+        };
+        setSearchQuery("");
+        setPhaseFilter("");
+        setFullReportMode(true);
+        return;
+      }
+
+      const previous = reportRestoreRef.current;
+      setFullReportMode(false);
+      if (previous) {
+        setSearchQuery(previous.searchQuery);
+        setPhaseFilter(previous.phaseFilter);
+        setExpandedNodes(previous.expandedNodes);
+      }
+      reportRestoreRef.current = null;
+    };
+
+    window.addEventListener("prepareWbsChecklistFullReport", handlePrepareFullReport as EventListener);
+    return () => window.removeEventListener("prepareWbsChecklistFullReport", handlePrepareFullReport as EventListener);
+  }, [searchQuery, phaseFilter, expandedNodes]);
+
   const items = useMemo(() => {
     return mergeChecklistSourceRows<DbChecklistItem>(
       initialItems as DbChecklistItem[],
@@ -222,13 +258,52 @@ export default function WbsChecklistPage() {
       if (!matchSearch) return false;
       if (phaseFilter && item.requirement !== phaseFilter) return false;
 
+      if (fullReportMode) {
+        const status = String(item.status || "").trim().toLowerCase();
+        const include =
+          status === "completed" ||
+          status === "done" ||
+          status === "in progress" ||
+          status === "ongoing" ||
+          status === "pending";
+        if (!include) return false;
+      }
+
       return true;
     });
-  }, [items, searchQuery, phaseFilter]);
+  }, [items, searchQuery, phaseFilter, fullReportMode]);
 
   const checklistHierarchy = useMemo(() => buildChecklistHierarchy(items), [items]);
 
   const checklistNumbering = useMemo(() => buildChecklistNumbering(items), [items]);
+
+  useEffect(() => {
+    const reportRows = items.map((item) => {
+      const key = String(item.original_item_id || item.id);
+      const numbering = checklistNumbering.get(key);
+
+      return {
+        id: key,
+        code: numbering?.itemCode || item.item_no || item.id || "",
+        title: item.item || "",
+        status: item.status || (item.checked ? "Completed" : "Not Yet Started"),
+        assignee: item.department || "",
+        dueDate: item.due_date || "",
+        phase: item.requirement || "Uncategorized",
+        category: item.section || "General",
+        parentTask: item.subsection || "",
+        remarks: item.remarks || "",
+      };
+    });
+
+    (window as any).wbsChecklistReportData = reportRows;
+
+    return () => {
+      if ((window as any).wbsChecklistReportData === reportRows) {
+        delete (window as any).wbsChecklistReportData;
+      }
+    };
+  }, [items, checklistNumbering]);
 
   const visibleCounts = useMemo(
     () => getChecklistStatusCounts(filteredItems),
@@ -338,6 +413,22 @@ export default function WbsChecklistPage() {
 
     return sortedRoot;
   }, [filteredItems]);
+
+  useEffect(() => {
+    if (!fullReportMode) return;
+
+    const nextExpanded: Record<string, boolean> = {};
+    Object.entries(groupedData).forEach(([phaseName, phaseData]: [string, any]) => {
+      Object.entries(phaseData.categories || {}).forEach(([catName, catData]: [string, any]) => {
+        nextExpanded[`${phaseName}|${catName}`] = true;
+        Object.keys(catData.tasks || {}).forEach((taskName) => {
+          nextExpanded[`${phaseName}|${catName}|${taskName}`] = true;
+        });
+      });
+    });
+
+    setExpandedNodes(nextExpanded);
+  }, [fullReportMode, groupedData]);
 
   const updateItem = async (id: string, patch: Partial<ChecklistItem>) => {
     const existingForAccess = items.find((item) => String(item.id) === String(id));

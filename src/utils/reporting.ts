@@ -1,3 +1,5 @@
+import { originalItems } from "../data/wbsChecklistData";
+
 type ModuleReportItem = {
   id: string;
   label: string;
@@ -32,6 +34,16 @@ type GenerateFullModuleReportParams = {
 type CapturedSection = {
   title: string;
   html: string;
+  paperSize?: "a4" | "a3";
+  orientation?: "portrait" | "landscape";
+  fitOnePage?: boolean;
+};
+
+type CaptureOptions = {
+  keepKpis: boolean;
+  sectionTitle: string;
+  transformClone?: (clone: HTMLElement) => void;
+  preserveVisibleLayout?: boolean;
 };
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1082,10 +1094,74 @@ function cleanClonedContent(
   return clone;
 }
 
-function captureCurrentContentHTML(options: {
-  keepKpis: boolean;
-  sectionTitle: string;
-}): string {
+
+function removeElementsHiddenInSource(source: HTMLElement, clone: HTMLElement): void {
+  const sourceChildren = Array.from(source.children) as HTMLElement[];
+  const cloneChildren = Array.from(clone.children) as HTMLElement[];
+
+  for (let index = cloneChildren.length - 1; index >= 0; index -= 1) {
+    const sourceChild = sourceChildren[index];
+    const cloneChild = cloneChildren[index];
+    if (!sourceChild || !cloneChild) continue;
+
+    const style = window.getComputedStyle(sourceChild);
+    const rect = sourceChild.getBoundingClientRect();
+    const hidden =
+      style.display === "none" ||
+      style.visibility === "hidden" ||
+      Number(style.opacity) === 0 ||
+      rect.width <= 0 ||
+      rect.height <= 0;
+
+    if (hidden) {
+      cloneChild.remove();
+      continue;
+    }
+
+    removeElementsHiddenInSource(sourceChild, cloneChild);
+  }
+}
+
+function copyCanvasImagesFromSource(source: HTMLElement, clone: HTMLElement): void {
+  const sourceCanvases = Array.from(source.querySelectorAll("canvas"));
+  const cloneCanvases = Array.from(clone.querySelectorAll("canvas"));
+
+  cloneCanvases.forEach((cloneCanvas, index) => {
+    const sourceCanvas = sourceCanvases[index] as HTMLCanvasElement | undefined;
+    if (!sourceCanvas) return;
+
+    try {
+      const image = document.createElement("img");
+      image.src = sourceCanvas.toDataURL("image/png");
+      image.alt = sourceCanvas.getAttribute("aria-label") || "Report chart";
+      image.style.width = `${sourceCanvas.getBoundingClientRect().width}px`;
+      image.style.height = `${sourceCanvas.getBoundingClientRect().height}px`;
+      image.style.maxWidth = "100%";
+      cloneCanvas.replaceWith(image);
+    } catch {
+      cloneCanvas.remove();
+    }
+  });
+}
+
+function cleanVisibleLayoutClone(clone: HTMLElement): HTMLElement {
+  removeControls(clone);
+  clone
+    .querySelectorAll("[role='dialog'], [aria-modal='true'], .modal, .tooltip, [data-report-exclude='true']")
+    .forEach((element) => element.remove());
+
+  clone.querySelectorAll<HTMLElement>("[style*='position: fixed'], [style*='position:fixed']")
+    .forEach((element) => element.remove());
+
+  clone.querySelectorAll<HTMLElement>("[style*='overflow']").forEach((element) => {
+    element.style.overflow = "visible";
+    element.style.maxHeight = "none";
+  });
+
+  return clone;
+}
+
+function captureCurrentContentHTML(options: CaptureOptions): string {
   const container = getActiveContentContainer();
 
   if (!container) {
@@ -1093,7 +1169,19 @@ function captureCurrentContentHTML(options: {
   }
 
   const clone = container.cloneNode(true) as HTMLElement;
-  const cleanedClone = cleanClonedContent(clone, options);
+
+  if (options.preserveVisibleLayout) {
+    removeElementsHiddenInSource(container, clone);
+    copyCanvasImagesFromSource(container, clone);
+  }
+
+  if (options.transformClone) {
+    options.transformClone(clone);
+  }
+
+  const cleanedClone = options.preserveVisibleLayout
+    ? cleanVisibleLayoutClone(clone)
+    : cleanClonedContent(clone, options);
 
   return (
     cleanedClone.innerHTML ||
@@ -1333,22 +1421,26 @@ function buildCapturedReportHTML(params: {
   title: string;
   projectName?: string;
   sections: CapturedSection[];
+  includeAutomaticHeader?: boolean;
 }): string {
-  const projectName = params.projectName || "Alcantara Diesel Power Plant";
-  const safeDate = formatDate(new Date());
   const orientation = detectBestOrientation(params.sections);
+  const includeAutomaticHeader = params.includeAutomaticHeader !== false;
 
   const sectionsHTML = params.sections
     .map((section, index) => {
-      const showTitle = shouldShowSectionTitle(section.title, params.title);
+      const sectionOrientation = section.orientation || orientation;
+      const sectionPaper = section.paperSize || "a4";
+      const pageClass = `${sectionPaper}-${sectionOrientation}`;
 
       return `
-        <section class="report-section ${index === 0 ? "first-section" : ""}">
-          ${
-            showTitle
-              ? `<h2 class="section-title">${escapeHTML(section.title)}</h2>`
-              : ""
-          }
+        <section
+          class="report-section ${index === 0 ? "first-section" : ""} ${pageClass}"
+          data-report-page="true"
+          data-paper-size="${sectionPaper}"
+          data-paper-orientation="${sectionOrientation}"
+          data-fit-one-page="${section.fitOnePage ? "true" : "false"}"
+          data-section-title="${escapeHTML(section.title)}"
+        >
           <div class="section-content">
             ${section.html}
           </div>
@@ -1357,497 +1449,313 @@ function buildCapturedReportHTML(params: {
     })
     .join("");
 
-  const html = `
+  const automaticHeader = includeAutomaticHeader
+    ? `
+      <header class="report-header" data-report-automatic-header="true">
+        <img
+          class="report-letterhead"
+          src="${REPORT_LETTERHEAD_URL}"
+          alt="SUWECO Letterhead"
+        />
+        <div class="report-title-row">
+          <div class="report-title-left">
+            <p class="project-name">${escapeHTML(params.projectName || "Alcantara Diesel Power Plant")}</p>
+            <h1 class="report-title">${escapeHTML(params.title.toUpperCase())}</h1>
+          </div>
+          <div class="report-title-right">
+            <p class="date-generated">Date Generated: ${escapeHTML(formatDate(new Date()))}</p>
+          </div>
+        </div>
+      </header>
+    `
+    : "";
+
+  return `
     <!DOCTYPE html>
     <html>
       <head>
         <title>${escapeHTML(params.title)}</title>
         <meta charset="UTF-8" />
-
         <style>
-          * {
-            box-sizing: border-box;
-          }
-
-          html,
-          body {
+          * { box-sizing: border-box; }
+          html, body {
             margin: 0;
             padding: 0;
-            font-family: Aptos, "Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif;
-            color: #1F2937;
-            background: #FFFFFF;
+            font-family: Aptos, "Segoe UI", Calibri, Arial, sans-serif;
+            color: #1f2937;
+            background: #fff;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
             font-variant-numeric: tabular-nums;
           }
-
-          body {
-            padding: 13mm 12mm;
-            font-size: 10.2px;
-            line-height: 1.35;
-          }
-
-          .report-document {
-            width: 100%;
-            max-width: 100%;
-            overflow: hidden;
-          }
-
-.report-header {
-  width: 100%;
-  margin: 0 0 3mm;
-  padding: 0 0 2.5mm;
-  border-bottom: 1.1px solid #0F172A;
-  page-break-inside: avoid;
-  break-inside: avoid;
-  page-break-after: avoid;
-  break-after: avoid;
-}
-
-.report-letterhead {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  height: 21mm;
-  object-fit: contain;
-  object-position: center top;
-  margin: 0 0 2.5mm;
-}
-
-.report-title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 10mm;
-  width: 100%;
-}
-
-.report-title-left {
-  text-align: left;
-  flex: 1;
-}
-
-.report-title-right {
-  text-align: right;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.project-name {
-  font-size: 8px;
-  line-height: 1.15;
-  font-weight: 700;
-  letter-spacing: 0.65px;
-  text-transform: uppercase;
-  margin: 0 0 0.8mm;
-  color: #475569;
-}
-
-.report-title {
-  font-size: 17px;
-  line-height: 1;
-  font-weight: 800;
-  letter-spacing: 0.55px;
-  text-transform: uppercase;
-  margin: 0;
-  color: #0F172A;
-}
-
-.date-generated {
-  margin: 0;
-  color: #475569;
-  font-size: 8px;
-  line-height: 1.15;
-}
+          body { font-size: 10px; line-height: 1.35; }
+          .report-document { width: 100%; overflow: visible; }
+          .report-header { margin: 10mm 10mm 4mm; border-bottom: 1px solid #0f172a; padding-bottom: 3mm; }
+          .report-letterhead { display: block; width: 100%; height: 20mm; object-fit: contain; }
+          .report-title-row { display: flex; justify-content: space-between; align-items: end; gap: 8mm; }
+          .project-name { margin: 0 0 1mm; font-size: 8px; font-weight: 700; text-transform: uppercase; }
+          .report-title { margin: 0; font-size: 17px; line-height: 1; text-transform: uppercase; }
+          .date-generated { margin: 0; font-size: 8px; white-space: nowrap; }
 
           .report-section {
-            margin-top: 7mm;
-            page-break-inside: auto;
-            break-inside: auto;
-            max-width: 100%;
-            overflow: hidden;
-          }
-
-          .report-section.first-section {
-            margin-top: 0;
-          }
-
-          .section-title {
-            font-size: 12.5px;
-            line-height: 1.25;
-            font-weight: 800;
-            letter-spacing: 0.35px;
-            margin: 0 0 4mm;
-            color: #0F172A;
-            text-transform: uppercase;
-            border-left: 3px solid #0F172A;
-            border-bottom: 1px solid #CBD5E1;
-            padding: 0 0 2mm 3mm;
-            page-break-after: avoid;
-            break-after: avoid;
-          }
-
-          .section-content {
+            display: block;
             width: 100%;
             max-width: 100%;
-            overflow: hidden !important;
-            color: #1F2937;
-            font-family: Aptos, "Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif !important;
+            margin: 0;
+            padding: 9mm;
+            overflow: visible;
+            break-before: auto;
+            page-break-before: auto;
           }
-
-          .section-content * {
-            font-family: Aptos, "Segoe UI", Calibri, "Helvetica Neue", Arial, sans-serif !important;
-            color: #1F2937 !important;
-            box-shadow: none !important;
-            text-shadow: none !important;
+          .report-section.first-section {
+            break-before: auto;
+            page-break-before: auto;
           }
-
-          .section-content > * {
-            max-width: 100% !important;
-          }
-
+          .section-content { width: 100%; max-width: 100%; overflow: visible !important; }
+          .section-content * { box-sizing: border-box !important; max-width: 100%; box-shadow: none !important; text-shadow: none !important; }
           .section-content button,
           .section-content input,
           .section-content select,
           .section-content textarea,
           .section-content form,
-          .section-content nav {
-            display: none !important;
-          }
+          .section-content nav,
+          .section-content [data-report-exclude="true"] { display: none !important; }
 
-          .section-content img {
-            max-width: 100%;
-            height: auto;
+          .report-page-heading {
+            margin: 0 0 4mm;
+            padding: 0 0 2mm;
+            border-bottom: 1px solid #94a3b8;
+            font-size: 14px;
+            line-height: 1.2;
+            font-weight: 800;
+            color: #0f172a;
+            text-transform: uppercase;
+            break-after: avoid;
+            page-break-after: avoid;
           }
+          .report-project-line { margin: -2mm 0 4mm; font-size: 8.5px; color: #64748b; }
 
           .section-content table {
             width: 100% !important;
-            max-width: 100% !important;
             border-collapse: collapse !important;
-            margin: 3mm 0 5mm !important;
-            font-size: ${orientation === "landscape" ? "7.2px" : "8.4px"} !important;
-            line-height: 1.2 !important;
             table-layout: fixed !important;
-            page-break-inside: auto !important;
-            break-inside: auto !important;
-            overflow-wrap: anywhere !important;
+            margin: 0 0 4mm !important;
+            font-size: 8px !important;
+            line-height: 1.2 !important;
           }
-
-          .section-content thead {
-            display: table-header-group !important;
-          }
-
-          .section-content tfoot {
-            display: table-footer-group !important;
-          }
-
-          .section-content tr {
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-          }
-
-          .section-content th {
-            border: 1px solid #CBD5E1 !important;
-            border-bottom: 1.4px solid #94A3B8 !important;
-            background: #F8FAFC !important;
-            color: #0F172A !important;
-            padding: 4px 5px !important;
-            text-align: left !important;
-            font-weight: 800 !important;
-            vertical-align: middle !important;
-            white-space: normal !important;
-            word-break: break-word !important;
-            overflow-wrap: anywhere !important;
-            text-transform: uppercase !important;
-            letter-spacing: 0.1px !important;
-          }
-
+          .section-content thead { display: table-header-group !important; }
+          .section-content tfoot { display: table-footer-group !important; }
+          .section-content tr { break-inside: avoid !important; page-break-inside: avoid !important; }
+          .section-content th,
           .section-content td {
-            border: 1px solid #E2E8F0 !important;
+            border: 1px solid #d8dee8 !important;
             padding: 4px 5px !important;
             text-align: left !important;
             vertical-align: top !important;
-            color: #1F2937 !important;
             white-space: normal !important;
-            word-break: break-word !important;
             overflow-wrap: anywhere !important;
-            font-weight: 400 !important;
+            word-break: normal !important;
           }
-
-          .section-content table tr td[colspan],
-          .section-content table tr th[colspan] {
-            width: auto !important;
-            max-width: 100% !important;
-            background: #FFFFFF !important;
-            font-weight: 700 !important;
-            color: #334155 !important;
+          .section-content th {
+            background: #f1f5f9 !important;
+            color: #0f172a !important;
+            font-weight: 800 !important;
+            text-transform: uppercase !important;
           }
+          .section-content tbody tr:nth-child(even) td { background: #fafafa !important; }
 
-          .section-content tbody tr:nth-child(even) td {
-            background: #FAFAFA !important;
-          }
-
-          .report-kpi-grid {
+          .report-kpi-grid,
+          .materials-kpi-grid {
             display: grid !important;
             grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
             gap: 8px !important;
-            margin: 0 0 5mm !important;
+            margin: 0 0 4mm !important;
+          }
+          .report-kpi-card,
+          .materials-kpi-card {
+            border: 1px solid #cbd5e1 !important;
+            border-top: 3px solid #0f172a !important;
+            border-radius: 4px !important;
+            padding: 8px !important;
+            background: #fff !important;
+            min-height: 48px !important;
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+          .preserve-page-layout {
             width: 100% !important;
             max-width: 100% !important;
-            align-items: stretch !important;
+            overflow: visible !important;
+          }
+          .preserve-page-layout * { box-sizing: border-box !important; }
+          .materials-dashboard-report { display: block !important; width: 100% !important; }
+          .materials-dashboard-report .report-panel {
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            padding: 8px;
+            margin: 0 0 4mm;
+            break-inside: avoid;
+          }
+          .materials-dashboard-report .report-two-column {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            align-items: start !important;
           }
 
-          .report-kpi-grid-5 {
-            grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
-          }
 
-          .report-kpi-card {
-            border: 1px solid #CBD5E1 !important;
-            border-top: 2px solid #0F172A !important;
-            background: #FFFFFF !important;
-            border-radius: 4px !important;
-            padding: 7px 8px !important;
-            min-height: 44px !important;
+          .materials-dashboard-print { width: 100%; }
+          .materials-report-kpis {
+            display: grid !important;
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+            gap: 10px !important;
+            margin-bottom: 5mm !important;
+          }
+          .materials-report-kpi {
+            border: 1px solid #cbd5e1 !important;
+            border-top: 4px solid #0f172a !important;
+            border-radius: 6px !important;
+            padding: 12px !important;
+            min-height: 62px !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: center !important;
-            gap: 1.5mm !important;
-            font-size: 9px !important;
-            line-height: 1.2 !important;
-          }
-
-          .report-kpi-card *,
-          .report-kpi-card p,
-          .report-kpi-card span,
-          .report-kpi-card div,
-          .report-kpi-card section,
-          .report-kpi-card article {
-            margin: 0 !important;
-            padding: 0 !important;
-            border: none !important;
-            border-radius: 0 !important;
-            background: transparent !important;
-            box-shadow: none !important;
-            font-size: inherit !important;
-            line-height: inherit !important;
-          }
-
-          .report-kpi-card > *:first-child {
-            font-size: 8px !important;
-            font-weight: 700 !important;
-            color: #64748B !important;
-            text-transform: uppercase !important;
-            letter-spacing: 0.2px !important;
-          }
-
-          .report-kpi-card > *:last-child {
-            font-size: 11px !important;
-            font-weight: 800 !important;
-            color: #0F172A !important;
-          }
-
-          .report-summary-box {
-            border: 1px solid #CBD5E1 !important;
-            border-left: 3px solid #0F172A !important;
-            background: #F8FAFC !important;
-            border-radius: 4px !important;
-            padding: 7px 9px !important;
-            margin: 0 0 5mm !important;
-          }
-
-          .report-summary-title {
-            font-size: 10px !important;
-            line-height: 1.2 !important;
-            font-weight: 800 !important;
-            color: #0F172A !important;
-            text-transform: uppercase !important;
-            margin: 0 0 1.5mm !important;
-            letter-spacing: 0.2px !important;
-          }
-
-          .report-summary-line {
-            display: flex !important;
-            flex-wrap: wrap !important;
-            gap: 14px !important;
-            font-size: 9.2px !important;
-            line-height: 1.3 !important;
-            color: #334155 !important;
-          }
-
-          .report-summary-line span {
-            white-space: nowrap !important;
-          }
-
-          .report-summary-line strong {
-            color: #0F172A !important;
-            font-weight: 700 !important;
-          }
-
-          .section-content h1,
-          .section-content h2,
-          .section-content h3,
-          .section-content h4 {
-            font-size: 12px !important;
-            line-height: 1.25 !important;
-            font-weight: 750 !important;
-            letter-spacing: 0.15px !important;
-            margin: 4mm 0 1.5mm !important;
-            color: #0F172A !important;
-            text-transform: uppercase !important;
-          }
-
-          .section-content p {
-            margin: 1mm 0 2mm !important;
-            font-size: 9.5px !important;
-            line-height: 1.3 !important;
-            color: #334155 !important;
-          }
-
-          .section-content .report-category-row {
-            border: 1px solid #E2E8F0 !important;
-            background: #F8FAFC !important;
-            color: #0F172A !important;
-            font-weight: 800 !important;
-            text-transform: uppercase !important;
-            letter-spacing: 0.15px !important;
-            padding: 5px 6px !important;
-            width: auto !important;
-            max-width: 100% !important;
-          }
-
-          .section-content [class*="rounded"],
-          .section-content [class*="shadow"],
-          .section-content [class*="bg-"],
-          .section-content [class*="border"] {
-            box-shadow: none !important;
-          }
-
-          .section-content > div:not(.report-kpi-grid):not(.report-kpi-card) {
-            border-radius: 0 !important;
-          }
-
-
-          .section-content [data-report-preserve="true"],
-          .section-content .project-schedule-gantt-report {
-            width: 100% !important;
-            max-width: 100% !important;
-            overflow: visible !important;
-            page-break-inside: avoid !important;
             break-inside: avoid !important;
           }
+          .materials-report-kpi span { font-size: 9px !important; color: #64748b !important; text-transform: uppercase; font-weight: 700; }
+          .materials-report-kpi strong { font-size: 22px !important; line-height: 1.1 !important; color: #0f172a !important; margin-top: 4px; }
+          .materials-report-panel { margin: 0 0 5mm !important; }
+          .materials-report-panel h3 {
+            margin: 0 0 2mm !important;
+            padding: 0 0 1.5mm !important;
+            border-bottom: 1px solid #94a3b8 !important;
+            font-size: 12px !important;
+            color: #0f172a !important;
+            break-after: avoid !important;
+          }
+          .materials-full-stock-table { break-before: page; page-break-before: always; }
+          .wbs-sequence-image-report {
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            align-items: flex-start !important;
+            justify-content: center !important;
+            overflow: hidden !important;
+          }
+          .wbs-sequence-image-report img {
+            display: block !important;
+            width: 100% !important;
+            height: auto !important;
+            max-width: 100% !important;
+            object-fit: contain !important;
+          }
 
-          .section-content .project-schedule-gantt-report > div {
+          .wbs-checklist-report table { font-size: 8.2px !important; }
+          .wbs-checklist-report .wbs-level-0 { padding-left: 5px !important; font-weight: 800 !important; }
+          .wbs-checklist-report .wbs-level-1 { padding-left: 14px !important; font-weight: 700 !important; }
+          .wbs-checklist-report .wbs-level-2 { padding-left: 24px !important; }
+          .wbs-checklist-report .wbs-level-3 { padding-left: 34px !important; }
+          .status-pill {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            min-width: 72px !important;
+            border-radius: 999px !important;
+            padding: 2px 7px !important;
+            white-space: nowrap !important;
+            font-size: 7.4px !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+          }
+          .status-completed { background: #dcfce7 !important; color: #166534 !important; border: 1px solid #86efac !important; }
+          .status-in-progress { background: #dbeafe !important; color: #1d4ed8 !important; border: 1px solid #93c5fd !important; }
+          .status-pending { background: #fef3c7 !important; color: #92400e !important; border: 1px solid #fcd34d !important; }
+          .status-not-yet-started { background: #f1f5f9 !important; color: #475569 !important; border: 1px solid #cbd5e1 !important; }
+
+          .wbs-checklist-print-kpis {
+            display: grid !important;
+            grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+            gap: 8px !important;
+            margin: 0 0 5mm !important;
+          }
+          .wbs-checklist-print-kpi {
+            min-height: 58px !important;
+            border: 1px solid #cbd5e1 !important;
+            border-top: 4px solid #0f172a !important;
+            border-radius: 5px !important;
+            padding: 8px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            text-align: center !important;
+            break-inside: avoid !important;
+          }
+          .wbs-checklist-print-kpi span { font-size: 8px !important; font-weight: 700 !important; text-transform: uppercase; color: #64748b !important; }
+          .wbs-checklist-print-kpi strong { margin-top: 3px; font-size: 20px !important; line-height: 1 !important; color: #0f172a !important; }
+          .wbs-checklist-status-section { margin: 0 0 5mm !important; }
+          .wbs-checklist-status-section h3 {
+            margin: 0 0 2mm !important;
+            padding: 2.5mm 3mm !important;
+            border-left: 4px solid #1e40af !important;
+            background: #eff6ff !important;
+            font-size: 11px !important;
+            line-height: 1.2 !important;
+            break-after: avoid !important;
+          }
+          .wbs-checklist-status-section.status-completed-section h3 { border-left-color: #16a34a !important; background: #f0fdf4 !important; }
+          .wbs-checklist-status-section.status-in-progress-section h3 { border-left-color: #2563eb !important; background: #eff6ff !important; }
+          .wbs-checklist-status-section.status-pending-section h3 { border-left-color: #d97706 !important; background: #fffbeb !important; }
+          .wbs-checklist-status-section.status-not-yet-started-section h3 { border-left-color: #64748b !important; background: #f8fafc !important; }
+          .wbs-checklist-print-table col.code { width: 14%; }
+          .wbs-checklist-print-table col.title { width: 46%; }
+          .wbs-checklist-print-table col.status { width: 14%; }
+          .wbs-checklist-print-table col.assignee { width: 16%; }
+          .wbs-checklist-print-table col.due { width: 10%; }
+          .wbs-group-row td { background: #e2e8f0 !important; font-weight: 800 !important; }
+          .wbs-parent-row td { background: #f8fafc !important; font-weight: 700 !important; }
+          .wbs-task-title.level-1 { padding-left: 12px !important; }
+          .wbs-task-title.level-2 { padding-left: 24px !important; }
+          .wbs-task-title.level-3 { padding-left: 36px !important; }
+
+          .wbs-sequence-report {
+            width: 100% !important;
             overflow: visible !important;
           }
+          .wbs-sequence-report svg,
+          .wbs-sequence-report canvas,
+          .wbs-sequence-report img { max-width: 100% !important; height: auto !important; }
+          .wbs-sequence-report [style*="overflow"] { overflow: visible !important; }
 
-          .section-content .project-schedule-gantt-report * {
-            box-shadow: none !important;
-            text-shadow: none !important;
-            print-color-adjust: exact;
-            -webkit-print-color-adjust: exact;
+          @page a4-portrait { size: A4 portrait; margin: 0; }
+          @page a4-landscape { size: A4 landscape; margin: 0; }
+          @page a3-landscape { size: A3 landscape; margin: 0; }
+          .a4-portrait { page: a4-portrait; }
+          .a4-landscape { page: a4-landscape; }
+          .a3-landscape { page: a3-landscape; }
+
+          @media print {
+            body { margin: 0; padding: 0; }
+            .report-section { min-height: 1px; }
           }
-
-          .section-content .project-schedule-gantt-report [style*="max-height"] {
-            max-height: none !important;
-          }
-
-          .empty-section {
-            text-align: center;
-            padding: 18px;
-            color: #64748B;
-            font-style: italic;
-          }
-
-@media print {
-  @page {
-    size: A4 ${orientation};
-    margin: 9mm;
-  }
-
-  body {
-    padding: 0;
-  }
-
-.report-header {
-  margin-bottom: 3mm;
-  padding-bottom: 2.5mm;
-}
-
-.report-letterhead {
-  width: 100%;
-  max-width: 100%;
-  height: 20mm;
-  object-fit: contain;
-  object-position: center top;
-  margin: 0 0 2.5mm;
-}
-
-.report-title-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-}
-
-.report-title-left {
-  text-align: left;
-}
-
-.report-title-right {
-  text-align: right;
-  white-space: nowrap;
-}
-
-.report-title {
-  font-size: 17px;
-}
-
           @media screen {
-            body {
-              max-width: ${orientation === "landscape" ? "1123px" : "794px"};
-              margin: 0 auto;
-              padding: 24px;
-            }
+            body { max-width: 1400px; margin: 0 auto; background: #e5e7eb; }
+            .report-section { background: #fff; margin: 12px auto; }
           }
         </style>
       </head>
-
-      <body>
+      <body
+        data-report-header-url="${REPORT_LETTERHEAD_URL}"
+        data-company-name="SUWECO TABLAS ENERGY CORPORATION, INC."
+        data-project-name="${escapeHTML(params.projectName || "Alcantara Diesel Power Plant")}"
+      >
         <div class="report-document">
-<header class="report-header">
-  <img
-    class="report-letterhead"
-    src="${REPORT_LETTERHEAD_URL}"
-    alt="SUWECO Letterhead"
-  />
-
-  <div class="report-title-row">
-    <div class="report-title-left">
-      <p class="project-name">${escapeHTML(projectName)}</p>
-      <h1 class="report-title">${escapeHTML(params.title.toUpperCase())}</h1>
-    </div>
-
-    <div class="report-title-right">
-      <p class="date-generated">Date Generated: ${escapeHTML(safeDate)}</p>
-    </div>
-  </div>
-</header>
-
+          ${automaticHeader}
           ${sectionsHTML}
         </div>
-
-        <script>
-          window.onload = function () {
-            window.focus();
-            setTimeout(function () {
-              window.print();
-            }, 500);
-          };
-        </script>
       </body>
     </html>
   `;
-
-return html;
 }
 
 function printCapturedReportHTML(html: string): void {
@@ -1891,43 +1799,616 @@ export async function generateCurrentPageReport(
   printCapturedReportHTML(html);
 }
 
+type LegacyRecord = Record<string, any>;
+
+function valueOf(record: LegacyRecord, ...keys: string[]): any {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (value !== undefined && value !== null) return value;
+  }
+  return "";
+}
+
+function cleanValue(value: unknown): string {
+  const text = String(value ?? "").trim();
+  return text && text !== "null" && text !== "undefined" ? text : "";
+}
+
+function recordBelongsToCurrentProject(record: LegacyRecord): boolean {
+  const currentProjectId = String(
+    (window as any).currentProjectId ||
+      (window as any).selectedProjectId ||
+      ""
+  );
+  if (!currentProjectId) return true;
+  const rowProjectId = String(valueOf(record, "projectId", "project_id") || "");
+  return !rowProjectId || rowProjectId === currentProjectId;
+}
+
+function lookupPrsNo(record: LegacyRecord): string {
+  const direct = cleanValue(valueOf(record, "prsNo", "prs_no"));
+  if (direct) return direct;
+
+  const prsId = String(valueOf(record, "prsId", "request_id", "prs_id") || "");
+  if (!prsId) return "";
+
+  const prsRows = ((window as any).prsRecords || []) as LegacyRecord[];
+  const match = prsRows.find((row) =>
+    [row.id, row.request_id, row.prsId].some((candidate) => String(candidate || "") === prsId)
+  );
+
+  return cleanValue(valueOf(match || {}, "prsNo", "prs_no"));
+}
+
+function isDeliveredRecord(record: LegacyRecord): boolean {
+  const deliveryDate = cleanValue(
+    valueOf(record, "dateDelivered", "date_delivered", "deliveryDate", "delivery_date")
+  );
+  const status = cleanValue(
+    valueOf(
+      record,
+      "procurementStatus",
+      "procurement_status",
+      "deliveryStatus",
+      "delivery_status",
+      "status"
+    )
+  ).toLowerCase();
+
+  return Boolean(deliveryDate) ||
+    status === "delivered" ||
+    status === "completed" ||
+    status.includes("fully delivered");
+}
+
+function reportHeading(title: string, projectName?: string): string {
+  return `
+    <div class="report-page-heading">${escapeHTML(title)}</div>
+    ${projectName ? `<div class="report-project-line">${escapeHTML(projectName)}</div>` : ""}
+  `;
+}
+
+function renderReportTable(headers: string[], rows: string[][], emptyText: string): string {
+  return `
+    <table data-report-table="true">
+      <thead><tr>${headers.map((header) => `<th>${escapeHTML(header)}</th>`).join("")}</tr></thead>
+      <tbody>
+        ${rows.length
+          ? rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHTML(cell || "-")}</td>`).join("")}</tr>`).join("")
+          : `<tr><td colspan="${headers.length}">${escapeHTML(emptyText)}</td></tr>`}
+      </tbody>
+    </table>
+  `;
+}
+
+function buildManilaSourceReport(projectName?: string): string {
+  const source = (((window as any).manilaRecords || []) as LegacyRecord[])
+    .filter(recordBelongsToCurrentProject);
+
+  const rows = source
+    .filter((row) => {
+      const hasPrsNo = lookupPrsNo(row) !== "";
+      return hasPrsNo && !isDeliveredRecord(row);
+    })
+    .map((row) => [
+      cleanValue(valueOf(row, "process")),
+      cleanValue(valueOf(row, "designation")),
+      lookupPrsNo(row),
+      cleanValue(valueOf(row, "item", "itemParticulars", "item_particulars")),
+      cleanValue(valueOf(row, "prsDate", "prs_date")),
+      cleanValue(valueOf(row, "subtaskCharging", "subtask_charging")),
+      cleanValue(valueOf(row, "poNo", "po_no")),
+      cleanValue(valueOf(row, "supplier")),
+      cleanValue(valueOf(row, "targetDate", "target_date")),
+      cleanValue(valueOf(row, "procurementStatus", "procurement_status", "status")),
+      cleanValue(valueOf(row, "currentDepartment", "current_department")),
+      cleanValue(valueOf(row, "remarks")),
+    ]);
+
+  return `${reportHeading("Manila Procurement - Undelivered with PRS No.", projectName)}${renderReportTable(
+    ["Process", "Designation", "PRS No.", "Item / Particulars", "PRS Date", "Subtask Charging", "PO No.", "Supplier", "Target Date", "Status", "Department", "Remarks"],
+    rows,
+    "No undelivered Manila Procurement records with a valid PRS number."
+  )}`;
+}
+
+function isLocalSupplyRecord(record: LegacyRecord): boolean {
+  const category = cleanValue(
+    valueOf(record, "category", "procurementType", "procurement_type", "tab", "repleCategory", "reple_category")
+  ).toLowerCase();
+
+  return category === "supplies" ||
+    category === "supply" ||
+    category.includes("suppl") ||
+    category.includes("material");
+}
+
+function buildLocalSourceReport(projectName?: string): string {
+  const source = (((window as any).localRecords || []) as LegacyRecord[])
+    .filter(recordBelongsToCurrentProject);
+
+  const rows = source
+    .filter((row) => isLocalSupplyRecord(row) && !isDeliveredRecord(row))
+    .map((row) => [
+      cleanValue(valueOf(row, "process")),
+      cleanValue(valueOf(row, "repleCategory", "reple_category", "category")),
+      cleanValue(valueOf(row, "repleNo", "reple_no")),
+      lookupPrsNo(row),
+      cleanValue(valueOf(row, "poNo", "po_no")),
+      cleanValue(valueOf(row, "supplier")),
+      cleanValue(valueOf(row, "targetDate", "target_date")),
+      cleanValue(valueOf(row, "procurementStatus", "procurement_status", "status")),
+      cleanValue(valueOf(row, "currentDepartment", "current_department")),
+      cleanValue(valueOf(row, "concerns", "remarks")),
+    ]);
+
+  return `${reportHeading("Local Procurement - Supplies - Undelivered", projectName)}${renderReportTable(
+    ["Process", "Category", "REPLE No.", "PRS No.", "PO No.", "Supplier", "Target Date", "Status", "Department", "Remarks / Concerns"],
+    rows,
+    "No undelivered Local Procurement supply records."
+  )}`;
+}
+
+function buildMaterialsDashboardReport(projectName?: string): string {
+  const source = (((window as any).materialsMasterlist || []) as LegacyRecord[])
+    .filter(recordBelongsToCurrentProject);
+  const transactions = (((window as any).materialTransactions ||
+    (window as any).materialsTransactions || []) as LegacyRecord[])
+    .filter(recordBelongsToCurrentProject);
+
+  const transactionMaterialIds = new Set(
+    transactions
+      .map((row) => cleanValue(valueOf(row, "materialId", "material_id")))
+      .filter(Boolean)
+  );
+  const transactionItemCodes = new Set(
+    transactions
+      .map((row) => cleanValue(valueOf(row, "itemCode", "item_code")))
+      .filter(Boolean)
+  );
+
+  const normalized = source
+    .map((row) => {
+      const id = cleanValue(valueOf(row, "id", "materialId", "material_id"));
+      const itemCode = cleanValue(valueOf(row, "itemCode", "item_code"));
+      const hasTransaction =
+        (id !== "" && transactionMaterialIds.has(id)) ||
+        (itemCode !== "" && transactionItemCodes.has(itemCode));
+      const currentStock = Number(valueOf(row, "currentStock", "current_stock") || 0);
+      const minimumStock = Number(valueOf(row, "minStock", "minimumStock", "minimum_stock") || 0);
+
+      return {
+        id,
+        itemCode,
+        itemName: cleanValue(valueOf(row, "itemName", "item_name")),
+        department: cleanValue(valueOf(row, "department")),
+        type: cleanValue(valueOf(row, "type")),
+        unit: cleanValue(valueOf(row, "unit")),
+        currentStock,
+        minimumStock,
+        hasTransaction,
+        status: currentStock <= minimumStock ? "Low / Out of Stock" : "Fully Stocked",
+      };
+    })
+    .filter((row) => row.hasTransaction);
+
+  const lowStock = normalized.filter((row) => row.currentStock <= row.minimumStock);
+  const fullyStocked = normalized.filter((row) => row.currentStock > row.minimumStock);
+
+  const departmentNames = Array.from(
+    new Set(normalized.map((row) => row.department || "Unspecified"))
+  ).sort((a, b) => a.localeCompare(b));
+
+  const departmentRows = departmentNames.map((department) => {
+    const rows = normalized.filter((row) => (row.department || "Unspecified") === department);
+    return [
+      department,
+      String(rows.length),
+      String(rows.filter((row) => row.currentStock <= row.minimumStock).length),
+      String(rows.filter((row) => row.currentStock > row.minimumStock).length),
+    ];
+  });
+
+  const toRows = (rows: typeof normalized) => rows.map((row) => [
+    row.itemCode,
+    row.itemName,
+    row.department,
+    row.type,
+    String(row.currentStock),
+    String(row.minimumStock),
+    row.unit,
+    row.status,
+  ]);
+
+  return `${reportHeading("Materials Dashboard", projectName)}
+    <div class="materials-dashboard-print">
+      <div class="materials-report-kpis">
+        <div class="materials-report-kpi"><span>Total Items with Transactions</span><strong>${normalized.length}</strong></div>
+        <div class="materials-report-kpi"><span>Low / Out of Stock</span><strong>${lowStock.length}</strong></div>
+        <div class="materials-report-kpi"><span>Fully Stocked</span><strong>${fullyStocked.length}</strong></div>
+      </div>
+      <div class="materials-report-panel">
+        <h3>Stock Summary by Department</h3>
+        ${renderReportTable(["Department", "Total Items", "Low / Out", "Fully Stocked"], departmentRows, "No transaction-backed material records are available.")}
+      </div>
+      <div class="materials-report-panel">
+        <h3>Low Stock / Out of Stock Items</h3>
+        ${renderReportTable(["Item Code", "Item Name", "Department", "Type", "Current Stock", "Minimum Stock", "Unit", "Status"], toRows(lowStock), "No transaction-backed low-stock or out-of-stock items.")}
+      </div>
+      <div class="materials-report-panel materials-stock-note" data-report-item="true">
+        <h3>Fully Stocked Summary</h3>
+        <p><strong>${fullyStocked.length}</strong> transaction-backed items are fully stocked. The detailed masterlist is intentionally excluded from the dashboard report so the output matches the dashboard view and stays concise.</p>
+      </div>
+    </div>`;
+}
+
+function normalizeChecklistReportStatus(value: unknown): "Completed" | "In Progress" | "Pending" | "Not Yet Started" {
+  const status = String(value || "").trim().toLowerCase();
+  if (status.includes("complete") || status === "done") return "Completed";
+  if (status.includes("progress") || status.includes("ongoing")) return "In Progress";
+  if (status.includes("pending")) return "Pending";
+  return "Not Yet Started";
+}
+
+function buildWbsChecklistSourceReport(projectName?: string): string {
+  const liveRows = ((window as any).wbsChecklistReportData || []) as any[];
+  const sourceRows = liveRows.length
+    ? liveRows
+    : originalItems.map((item: any) => ({
+        code: item.item_no || item.id || "",
+        title: item.item || "",
+        status: item.status || (item.checked ? "Completed" : "Not Yet Started"),
+        assignee: item.department || "",
+        dueDate: item.due_date || "",
+        phase: item.requirement || "Uncategorized",
+        category: item.section || "General",
+        parentTask: item.subsection || "",
+      }));
+
+  const rows = sourceRows
+    .map((row) => ({
+      code: cleanValue(row.code),
+      title: cleanValue(row.title),
+      status: normalizeChecklistReportStatus(row.status),
+      assignee: cleanValue(row.assignee),
+      dueDate: cleanValue(row.dueDate),
+      phase: cleanValue(row.phase) || "Uncategorized",
+      category: cleanValue(row.category) || "General",
+      parentTask: cleanValue(row.parentTask),
+    }))
+    .filter((row) => row.title !== "");
+
+  const statusOrder = ["Completed", "In Progress", "Pending", "Not Yet Started"] as const;
+  const count = (status: typeof statusOrder[number]) => rows.filter((row) => row.status === status).length;
+
+  const renderStatusSection = (status: typeof statusOrder[number]) => {
+    const statusRows = rows.filter((row) => row.status === status);
+    if (!statusRows.length) return "";
+
+    if (status === "Not Yet Started") {
+      const grouped = new Map<string, { phase: string; category: string; parentTask: string; count: number }>();
+      statusRows.forEach((row) => {
+        const key = [row.phase, row.category, row.parentTask].join("|");
+        const current = grouped.get(key);
+        if (current) current.count += 1;
+        else grouped.set(key, { phase: row.phase, category: row.category, parentTask: row.parentTask, count: 1 });
+      });
+      const summaryRows = Array.from(grouped.values()).map((group) => `
+        <tr data-report-row="true">
+          <td>-</td>
+          <td class="wbs-task-title level-1">${escapeHTML([group.phase, group.category, group.parentTask].filter(Boolean).join(" / "))}</td>
+          <td><span class="status-pill status-not-yet-started">Not Yet Started</span></td>
+          <td>-</td>
+          <td>${group.count} item${group.count === 1 ? "" : "s"}</td>
+        </tr>`).join("");
+      return `<div class="wbs-checklist-status-section status-not-yet-started-section" data-report-item="true">
+        <h3>Not Yet Started Items (Collapsed Summary)</h3>
+        <table class="wbs-checklist-print-table" data-report-table="true">
+          <colgroup><col class="code"/><col class="title"/><col class="status"/><col class="assignee"/><col class="due"/></colgroup>
+          <thead><tr><th>WBS Code</th><th>Phase / Category / Parent Task</th><th>Status</th><th>Responsible Person</th><th>Count</th></tr></thead>
+          <tbody>${summaryRows}</tbody>
+        </table>
+      </div>`;
+    }
+
+    let lastPhase = "";
+    let lastCategory = "";
+    let lastParentTask = "";
+    const body: string[] = [];
+
+    statusRows.forEach((row) => {
+      if (row.phase !== lastPhase) {
+        body.push(`<tr class="wbs-group-row"><td colspan="5">${escapeHTML(row.phase)}</td></tr>`);
+        lastPhase = row.phase;
+        lastCategory = "";
+        lastParentTask = "";
+      }
+      if (row.category !== lastCategory) {
+        body.push(`<tr class="wbs-parent-row"><td></td><td colspan="4" class="wbs-task-title level-1">${escapeHTML(row.category)}</td></tr>`);
+        lastCategory = row.category;
+        lastParentTask = "";
+      }
+      if (row.parentTask && row.parentTask !== lastParentTask) {
+        body.push(`<tr class="wbs-parent-row"><td></td><td colspan="4" class="wbs-task-title level-2">${escapeHTML(row.parentTask)}</td></tr>`);
+        lastParentTask = row.parentTask;
+      }
+      body.push(`<tr data-report-row="true">
+        <td>${escapeHTML(row.code || "-")}</td>
+        <td class="wbs-task-title level-3">${escapeHTML(row.title)}</td>
+        <td><span class="status-pill status-${row.status.toLowerCase().replace(/\s+/g, "-")}">${escapeHTML(row.status)}</span></td>
+        <td>${escapeHTML(row.assignee || "-")}</td>
+        <td>${escapeHTML(row.dueDate || "-")}</td>
+      </tr>`);
+    });
+
+    const statusClass = status.toLowerCase().replace(/\s+/g, "-");
+    return `<div class="wbs-checklist-status-section status-${statusClass}-section" data-report-item="true">
+      <h3>${escapeHTML(status)} Items</h3>
+      <table class="wbs-checklist-print-table" data-report-table="true">
+        <colgroup><col class="code"/><col class="title"/><col class="status"/><col class="assignee"/><col class="due"/></colgroup>
+        <thead><tr><th>WBS Code</th><th>Task / Activity</th><th>Status</th><th>Responsible Person</th><th>Due Date</th></tr></thead>
+        <tbody>${body.join("")}</tbody>
+      </table>
+    </div>`;
+  };
+
+  return `${reportHeading("WBS Checklist", projectName)}
+    <div class="wbs-checklist-print-report">
+      <div class="wbs-checklist-print-kpis" data-report-item="true">
+        <div class="wbs-checklist-print-kpi"><span>Total Items</span><strong>${rows.length}</strong></div>
+        <div class="wbs-checklist-print-kpi"><span>Completed</span><strong>${count("Completed")}</strong></div>
+        <div class="wbs-checklist-print-kpi"><span>In Progress</span><strong>${count("In Progress")}</strong></div>
+        <div class="wbs-checklist-print-kpi"><span>Pending</span><strong>${count("Pending")}</strong></div>
+        <div class="wbs-checklist-print-kpi"><span>Not Yet Started</span><strong>${count("Not Yet Started")}</strong></div>
+      </div>
+      ${statusOrder.map(renderStatusSection).join("")}
+    </div>`;
+}
+
+async function buildWbsSequenceImageReport(projectName?: string): Promise<string> {
+  const capture = (window as any).captureWbsSequenceForFullReport;
+  if (typeof capture !== "function") {
+    throw new Error("WBS Sequence report capture is not available.");
+  }
+
+  const result = await capture();
+  const dataUrl = typeof result === "string" ? result : result?.dataUrl;
+  if (!dataUrl) {
+    throw new Error("WBS Sequence report capture returned no image.");
+  }
+
+  return `<div class="wbs-sequence-image-report">
+      <img src="${dataUrl}" alt="WBS Sequence" />
+    </div>`;
+}
+
+function transformExpenseOverview(clone: HTMLElement): void {
+  const candidates = Array.from(clone.querySelectorAll<HTMLElement>("div, section, article"));
+
+  candidates.forEach((element) => {
+    if (element.closest("table")) return;
+
+    const text = normalizeText(element.innerText || element.textContent || "");
+    const lower = text.toLowerCase();
+    const hasPaidUnpaidLabels = /(^|\s)paid(\s|$)/i.test(text) && /(^|\s)unpaid(\s|$)/i.test(text);
+    const hasRawScaleNumbers = /0\s+[\d,]+\s+[\d,]+\s+[\d,]+/.test(text);
+    const isCompactBlock = text.length > 0 && text.length < 220;
+
+    if (hasPaidUnpaidLabels && hasRawScaleNumbers && isCompactBlock) {
+      element.remove();
+    }
+  });
+}
+
+function transformMaterialsDashboard(clone: HTMLElement): void {
+  clone.classList.add("materials-dashboard-report", "preserve-page-layout");
+  clone.querySelectorAll("button, input, select, textarea, form, nav, [role='dialog']")
+    .forEach((element) => element.remove());
+  clone.querySelectorAll<HTMLElement>("[style*='position: fixed'], [style*='position:fixed']")
+    .forEach((element) => element.remove());
+}
+
+function transformCoordination(clone: HTMLElement): void {
+  clone.classList.add("coordination-report");
+  clone.querySelectorAll("button, input, select, textarea, form, nav, [role='dialog']").forEach((el) => el.remove());
+  clone.querySelectorAll("[style*='max-height']").forEach((el) => (el as HTMLElement).style.maxHeight = "none");
+  clone.querySelectorAll("[style*='overflow']").forEach((el) => (el as HTMLElement).style.overflow = "visible");
+}
+
+function transformWbsSequence(clone: HTMLElement): void {
+  clone.classList.add("wbs-sequence-report", "preserve-page-layout");
+  clone.querySelectorAll("button, input, select, textarea, form, nav, [role='dialog']")
+    .forEach((element) => element.remove());
+  clone.querySelectorAll<HTMLElement>("[style*='position: fixed'], [style*='position:fixed']")
+    .forEach((element) => element.remove());
+}
+
+function transformWbsChecklist(clone: HTMLElement): void {
+  clone.classList.add("wbs-checklist-report");
+  clone.querySelectorAll("button, input, select, textarea, form, nav, [role='dialog']").forEach((el) => el.remove());
+  clone.querySelectorAll("[style*='max-height']").forEach((el) => (el as HTMLElement).style.maxHeight = "none");
+  clone.querySelectorAll("[style*='overflow']").forEach((el) => (el as HTMLElement).style.overflow = "visible");
+}
+
+async function waitForActivePageReady(options: {
+  timeoutMs?: number;
+  requireTableRows?: boolean;
+  disallowText?: string[];
+} = {}): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const disallow = (options.disallowText || ["loading", "please wait"]).map((value) => value.toLowerCase());
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    const container = getActiveContentContainer();
+    if (container) {
+      const text = normalizeText(container.innerText || container.textContent || "").toLowerCase();
+      const hasLoadingText = disallow.some((value) => text.includes(value));
+      const dataRows = container.querySelectorAll("tbody tr").length;
+      const hasUsefulContent = text.length > 40 || container.querySelectorAll("canvas, svg, img, [data-report-item]").length > 0;
+      const rowsReady = !options.requireTableRows || dataRows > 0;
+      if (!hasLoadingText && hasUsefulContent && rowsReady) return;
+    }
+    await delay(300);
+  }
+}
+
+async function waitForWindowArray(name: string, timeoutMs = 8000): Promise<any[]> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const value = (window as any)[name];
+    if (Array.isArray(value) && value.length > 0) return value;
+    await delay(250);
+  }
+  const value = (window as any)[name];
+  return Array.isArray(value) ? value : [];
+}
+
 export async function generateFullModuleReport(
   params: GenerateFullModuleReportParams
 ): Promise<void> {
-  const allSections: CapturedSection[] = [];
+  const sections: CapturedSection[] = [];
 
-  for (const item of params.moduleItems) {
-    params.setActivePage(item.id);
-    await delay(900);
-
-    const sections = await captureCurrentPageSections(item.label, true);
-
-    if (sections.length > 0) {
-      allSections.push(...sections);
+  const capturePage = async (spec: {
+    pageId: string;
+    title: string;
+    prepare?: () => void | Promise<void>;
+    transformClone?: (clone: HTMLElement) => void;
+    preserveVisibleLayout?: boolean;
+    paperSize?: "a4" | "a3";
+    orientation?: "portrait" | "landscape";
+    cleanup?: () => void | Promise<void>;
+  }) => {
+    params.setActivePage(spec.pageId);
+    await delay(500);
+    await waitForActivePageReady({ timeoutMs: 15000 });
+    if (spec.prepare) {
+      await spec.prepare();
+      await delay(700);
     }
+
+    const html = captureCurrentContentHTML({
+      keepKpis: true,
+      sectionTitle: spec.title,
+      transformClone: spec.transformClone,
+      preserveVisibleLayout: spec.preserveVisibleLayout,
+    });
+
+    if (sectionHasRealData(html)) {
+      sections.push({
+        title: spec.title,
+        html: `${reportHeading(spec.title, params.projectName)}${html}`,
+        paperSize: spec.paperSize || "a4",
+        orientation: spec.orientation,
+      });
+    }
+
+    if (spec.cleanup) await spec.cleanup();
+  };
+
+  try {
+    await capturePage({
+      pageId: "expense-overview",
+      title: "Expense Overview",
+      orientation: "landscape",
+      transformClone: transformExpenseOverview,
+    });
+
+    // Load the actual module pages first so the global source arrays are current.
+    params.setActivePage("manila");
+    await waitForActivePageReady({ timeoutMs: 15000 });
+    await waitForWindowArray("manilaRecords", 12000);
+    sections.push({
+      title: "Manila Procurement",
+      html: buildManilaSourceReport(params.projectName),
+      paperSize: "a4",
+      orientation: "landscape",
+    });
+
+    params.setActivePage("local");
+    await waitForActivePageReady({ timeoutMs: 15000 });
+    await waitForWindowArray("localRecords", 12000);
+    sections.push({
+      title: "Local Procurement - Supplies",
+      html: buildLocalSourceReport(params.projectName),
+      paperSize: "a4",
+      orientation: "landscape",
+    });
+
+    params.setActivePage("materials");
+    await delay(900);
+    const setMaterialsTab = (window as any).setMaterialsTab;
+    if (typeof setMaterialsTab === "function") setMaterialsTab("dashboard");
+    await delay(500);
+    sections.push({
+      title: "Materials Dashboard",
+      html: buildMaterialsDashboardReport(params.projectName),
+      paperSize: "a4",
+      orientation: "landscape",
+    });
+
+    await capturePage({ pageId: "fuel", title: "Fuel", orientation: "landscape" });
+    await capturePage({ pageId: "project-schedule", title: "Project Schedule", orientation: "landscape" });
+    await capturePage({
+      pageId: "coordination",
+      title: "Coordination",
+      prepare: async () => {
+        await waitForActivePageReady({ timeoutMs: 18000, disallowText: ["loading project schedule", "loading"] });
+      },
+      transformClone: transformCoordination,
+      orientation: "landscape",
+    });
+    params.setActivePage("wbs-sequence");
+    await delay(1200);
+    sections.push({
+      title: "WBS Sequence",
+      html: await buildWbsSequenceImageReport(params.projectName),
+      paperSize: "a3",
+      orientation: "landscape",
+      fitOnePage: true,
+    });
+    params.setActivePage("wbs-checklist");
+    await delay(900);
+    window.dispatchEvent(
+      new CustomEvent("prepareWbsChecklistFullReport", { detail: { enabled: true } })
+    );
+    await waitForWindowArray("wbsChecklistReportData", 10000);
+    await delay(450);
+    const checklistHtml = buildWbsChecklistSourceReport(params.projectName);
+    if (sectionHasRealData(checklistHtml)) {
+      sections.push({
+        title: "WBS Checklist",
+        html: checklistHtml,
+        paperSize: "a4",
+        orientation: "landscape",
+      });
+    }
+    window.dispatchEvent(
+      new CustomEvent("prepareWbsChecklistFullReport", { detail: { enabled: false } })
+    );
+  } finally {
+    params.setActivePage(params.originalPage);
+    await delay(350);
   }
 
-  params.setActivePage(params.originalPage);
-  await delay(300);
-
-  if (!allSections.length) {
-    alert("No report data available for this module.");
+  if (!sections.length) {
+    alert("No report data is available for the configured full report.");
     return;
   }
 
-  const reportTitle = `${params.moduleTitle} Full Report`;
-
+  const reportTitle = "Project Full Report";
   const html = buildCapturedReportHTML({
     title: reportTitle,
     projectName: params.projectName,
-    sections: allSections,
+    sections,
+    includeAutomaticHeader: false,
   });
 
   await saveGeneratedReportToSupabase({
     title: reportTitle,
     projectName: params.projectName,
-    moduleId: params.moduleId,
-    moduleName: params.moduleTitle,
+    moduleId: "project-full-report",
+    moduleName: "Budget, Procurement and Task",
     reportScope: "module",
     html,
   });

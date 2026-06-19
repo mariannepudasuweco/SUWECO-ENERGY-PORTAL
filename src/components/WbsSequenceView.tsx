@@ -448,6 +448,66 @@ export default function WbsSequenceView({ previewMode = false, projectName, sele
     // alert('Sequence saved!'); // we remove alert so it just feels like a modern UI save
   };
 
+
+  useEffect(() => {
+    const captureForReport = async () => {
+      if (!workspaceRef.current) {
+        throw new Error("WBS Sequence workspace is not ready.");
+      }
+
+      const previousZoom = zoomLevel;
+      setZoomLevel(1);
+      await new Promise((resolve) => setTimeout(resolve, 900));
+
+      try {
+        const node = workspaceRef.current;
+        const dataUrl = await htmlToImage.toPng(node, {
+          pixelRatio: 1.5,
+          backgroundColor: '#ffffff',
+          cacheBust: true,
+          skipFonts: true,
+          width: node.scrollWidth,
+          height: node.scrollHeight,
+          style: {
+            transform: 'none',
+            transformOrigin: 'top left',
+            margin: '0',
+            padding: '24px',
+            overflow: 'visible',
+            width: `${node.scrollWidth}px`,
+            height: `${node.scrollHeight}px`,
+          },
+          filter: (element) => {
+            const htmlElement = element as HTMLElement;
+            if (!htmlElement) return true;
+            if (htmlElement.matches?.('button, input, select, textarea, [role="dialog"]')) return false;
+            return true;
+          },
+        });
+
+        if (!dataUrl || dataUrl.length < 100) {
+          throw new Error("WBS Sequence capture is empty.");
+        }
+
+        return {
+          dataUrl,
+          width: node.scrollWidth,
+          height: node.scrollHeight,
+        };
+      } finally {
+        setZoomLevel(previousZoom);
+      }
+    };
+
+    (window as any).captureWbsSequenceForFullReport = captureForReport;
+
+    return () => {
+      if ((window as any).captureWbsSequenceForFullReport === captureForReport) {
+        delete (window as any).captureWbsSequenceForFullReport;
+      }
+    };
+  }, [zoomLevel]);
+
   // --- PDF Export ---
   const handleExportPDF = async () => {
     if (!workspaceRef.current || isExporting) return;
