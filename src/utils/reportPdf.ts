@@ -9,43 +9,69 @@ export type GeneratedPdf = {
   pageCount: number;
 };
 
+type CanvasRegion = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type TableRegion = {
+  top: number;
+  bottom: number;
+  header: CanvasRegion | null;
+};
+
 const sanitizeFilename = (value: string) => {
   const cleaned = String(value || "generated-report")
     .trim()
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
     .replace(/\s+/g, " ")
     .replace(/\.+$/g, "");
+
   return cleaned || "generated-report";
 };
 
 const blobToBase64 = (blob: Blob): Promise<string> =>
   new Promise((resolve, reject) => {
     const reader = new FileReader();
+
     reader.onloadend = () => {
       if (typeof reader.result !== "string") {
         reject(new Error("Unable to convert the generated PDF."));
         return;
       }
+
       const base64 = reader.result.split(",")[1];
+
       if (!base64) {
         reject(new Error("The generated PDF attachment is empty."));
         return;
       }
+
       resolve(base64);
     };
+
     reader.onerror = () =>
       reject(reader.error || new Error("Unable to read the generated PDF."));
+
     reader.readAsDataURL(blob);
   });
 
 const waitForImages = async (root: ParentNode) => {
   const images = Array.from(root.querySelectorAll("img"));
+
   await Promise.all(
     images.map(
       (image) =>
         new Promise<void>((resolve) => {
-          if (image.complete) return resolve();
+          if (image.complete) {
+            resolve();
+            return;
+          }
+
           const finish = () => resolve();
+
           image.addEventListener("load", finish, { once: true });
           image.addEventListener("error", finish, { once: true });
           window.setTimeout(finish, 5000);
@@ -54,92 +80,325 @@ const waitForImages = async (root: ParentNode) => {
   );
 };
 
+const waitForLayout = () =>
+  new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    });
+  });
+
 function chooseOrientation(document: Document): "portrait" | "landscape" {
   const tables = Array.from(document.querySelectorAll("table"));
-  const widestTable = tables.reduce(
-    (max, table) => Math.max(max, (table as HTMLElement).scrollWidth),
-    0
-  );
-  const mostColumns = tables.reduce(
-    (max, table) =>
-      Math.max(max, table.querySelectorAll("thead tr:first-child th").length),
-    0
-  );
-  return widestTable > 760 || mostColumns > 6 ? "landscape" : "portrait";
+
+  const mostColumns = tables.reduce((maximum, table) => {
+    const firstHeaderRow = table.querySelector("thead tr");
+    const firstBodyRow = table.querySelector("tbody tr");
+    const columnCount = Math.max(
+      firstHeaderRow?.children.length || 0,
+      firstBodyRow?.children.length || 0
+    );
+
+    return Math.max(maximum, columnCount);
+  }, 0);
+
+  const title = document.title.toLowerCase();
+  const hasWideReportName = [
+    "boq",
+    "charging",
+    "procurement",
+    "materials",
+    "payroll",
+    "schedule",
+  ].some((word) => title.includes(word));
+
+  return mostColumns >= 6 || hasWideReportName ? "landscape" : "portrait";
 }
 
-function injectPdfStyles(document: Document, orientation: "portrait" | "landscape") {
+function injectPdfStyles(
+  document: Document,
+  orientation: "portrait" | "landscape",
+  targetWidth: number
+) {
+  document.querySelector("style[data-pdf-layout-fix]")?.remove();
+
   const style = document.createElement("style");
   style.setAttribute("data-pdf-layout-fix", "true");
   style.textContent = `
-    html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
-    body { overflow: visible !important; }
-    .report-document, main, #reactContainer, #contentArea {
-      width: ${orientation === "landscape" ? "1123px" : "794px"} !important;
-      max-width: none !important;
-      min-width: 0 !important;
+    html,
+    body {
+      width: ${targetWidth}px !important;
+      min-width: ${targetWidth}px !important;
+      max-width: ${targetWidth}px !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #ffffff !important;
+      overflow: visible !important;
+    }
+
+    body {
+      font-size: ${orientation === "landscape" ? "11px" : "12px"} !important;
+      line-height: 1.3 !important;
+    }
+
+    .report-document,
+    main,
+    #reactContainer,
+    #contentArea {
+      display: block !important;
+      width: ${targetWidth}px !important;
+      min-width: ${targetWidth}px !important;
+      max-width: ${targetWidth}px !important;
+      margin: 0 !important;
+      padding: ${orientation === "landscape" ? "22px" : "26px"} !important;
       overflow: visible !important;
       box-sizing: border-box !important;
     }
+
+    .report-document *,
+    main *,
+    #reactContainer *,
+    #contentArea * {
+      box-sizing: border-box !important;
+      max-width: 100% !important;
+    }
+
+    .report-header {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+
+    .report-section,
+    .section-content {
+      width: 100% !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+    }
+
     table {
       width: 100% !important;
+      min-width: 0 !important;
       max-width: 100% !important;
       table-layout: fixed !important;
       border-collapse: collapse !important;
       overflow: visible !important;
+      margin-left: 0 !important;
+      margin-right: 0 !important;
+      font-size: ${orientation === "landscape" ? "8.8px" : "9.6px"} !important;
+      line-height: 1.22 !important;
     }
-    th, td {
-      white-space: normal !important;
-      overflow-wrap: anywhere !important;
-      word-break: break-word !important;
-      vertical-align: top !important;
-      line-height: 1.25 !important;
-      box-sizing: border-box !important;
+
+    thead {
+      display: table-header-group !important;
     }
-    thead { display: table-header-group !important; }
-    tfoot { display: table-footer-group !important; }
-    tr, td, th, .report-card, [data-report-row] {
+
+    tfoot {
+      display: table-footer-group !important;
+    }
+
+    tr,
+    td,
+    th,
+    .report-card,
+    .report-kpi-card,
+    .report-summary-box,
+    [data-report-row] {
       break-inside: avoid !important;
       page-break-inside: avoid !important;
     }
-    .overflow-x-auto, .overflow-auto, [style*="overflow-x"] {
-      overflow: visible !important;
+
+    th,
+    td {
+      min-width: 0 !important;
       max-width: none !important;
+      padding: 5px 6px !important;
+      white-space: normal !important;
+      overflow: visible !important;
+      overflow-wrap: anywhere !important;
+      word-break: normal !important;
+      hyphens: auto !important;
+      vertical-align: top !important;
+      line-height: 1.22 !important;
     }
-    img, svg, canvas { max-width: 100% !important; }
-    [data-report-exclude="true"], button, input, select, textarea { display: none !important; }
+
+    th {
+      font-size: ${orientation === "landscape" ? "8.5px" : "9.2px"} !important;
+    }
+
+    .overflow-x-auto,
+    .overflow-auto,
+    [style*="overflow-x"],
+    [style*="overflow: auto"],
+    [style*="overflow:auto"] {
+      width: 100% !important;
+      max-width: 100% !important;
+      overflow: visible !important;
+    }
+
+    img,
+    svg,
+    canvas {
+      max-width: 100% !important;
+      height: auto !important;
+    }
+
+    [data-report-exclude="true"],
+    button,
+    input,
+    select,
+    textarea,
+    form,
+    nav {
+      display: none !important;
+    }
   `;
+
   document.head.appendChild(style);
+}
+
+function getCanvasRegion(
+  element: Element,
+  rootRect: DOMRect,
+  scaleX: number,
+  scaleY: number
+): CanvasRegion | null {
+  const rect = element.getBoundingClientRect();
+
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  return {
+    x: Math.max(0, Math.round((rect.left - rootRect.left) * scaleX)),
+    y: Math.max(0, Math.round((rect.top - rootRect.top) * scaleY)),
+    width: Math.max(1, Math.round(rect.width * scaleX)),
+    height: Math.max(1, Math.round(rect.height * scaleY)),
+  };
 }
 
 function getSafeBreaks(root: HTMLElement, scaleY: number): number[] {
   const rootRect = root.getBoundingClientRect();
-  const candidates = Array.from(
-    root.querySelectorAll("tr, [data-report-row], .report-card")
-  ) as HTMLElement[];
+
+  const selectors = [
+    "tbody tr",
+    "tfoot tr",
+    ".report-summary-box",
+    ".report-kpi-grid",
+    ".report-card",
+    "[data-report-row]",
+    ".section-content > *",
+    ".report-section",
+  ].join(",");
+
+  const candidates = Array.from(root.querySelectorAll(selectors)) as HTMLElement[];
+
   const breaks = candidates
-    .map((el) => (el.getBoundingClientRect().bottom - rootRect.top) * scaleY)
+    .map((element) => {
+      const rect = element.getBoundingClientRect();
+      return (rect.bottom - rootRect.top) * scaleY;
+    })
     .filter((value) => Number.isFinite(value) && value > 0)
+    .map((value) => Math.round(value))
     .sort((a, b) => a - b);
-  return Array.from(new Set(breaks.map((value) => Math.round(value))));
+
+  return Array.from(new Set(breaks));
 }
 
-function findDominantHeader(root: HTMLElement, scaleX: number, scaleY: number) {
-  const tables = Array.from(root.querySelectorAll("table")) as HTMLTableElement[];
-  const dominant = tables.sort(
-    (a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width
-  )[0];
-  const thead = dominant?.querySelector("thead") as HTMLElement | null;
-  if (!thead) return null;
+function getReportHeader(
+  root: HTMLElement,
+  scaleX: number,
+  scaleY: number
+): CanvasRegion | null {
+  const header = root.querySelector(".report-header");
+
+  if (!header) {
+    return null;
+  }
+
+  return getCanvasRegion(header, root.getBoundingClientRect(), scaleX, scaleY);
+}
+
+function getTableRegions(
+  root: HTMLElement,
+  scaleX: number,
+  scaleY: number
+): TableRegion[] {
   const rootRect = root.getBoundingClientRect();
-  const rect = thead.getBoundingClientRect();
-  if (rect.height <= 0 || rect.width <= 0) return null;
-  return {
-    x: Math.max(0, Math.round((rect.left - rootRect.left) * scaleX)),
-    y: Math.max(0, Math.round((rect.top - rootRect.top) * scaleY)),
-    width: Math.round(rect.width * scaleX),
-    height: Math.round(rect.height * scaleY),
-  };
+
+  return Array.from(root.querySelectorAll("table"))
+    .map((table): TableRegion | null => {
+      const tableRegion = getCanvasRegion(table, rootRect, scaleX, scaleY);
+
+      if (!tableRegion) {
+        return null;
+      }
+
+      const thead = table.querySelector("thead");
+      const header = thead
+        ? getCanvasRegion(thead, rootRect, scaleX, scaleY)
+        : null;
+
+      return {
+        top: tableRegion.y,
+        bottom: tableRegion.y + tableRegion.height,
+        header,
+      };
+    })
+    .filter((region): region is TableRegion => Boolean(region));
+}
+
+function findActiveTableHeader(
+  tableRegions: TableRegion[],
+  sourceY: number
+): CanvasRegion | null {
+  const activeTable = tableRegions.find(
+    (table) => sourceY > table.top && sourceY < table.bottom
+  );
+
+  return activeTable?.header || null;
+}
+
+function drawCanvasRegion(
+  context: CanvasRenderingContext2D,
+  sourceCanvas: HTMLCanvasElement,
+  region: CanvasRegion,
+  destinationY: number
+) {
+  context.drawImage(
+    sourceCanvas,
+    region.x,
+    region.y,
+    region.width,
+    region.height,
+    region.x,
+    destinationY,
+    region.width,
+    region.height
+  );
+}
+
+function findPageEnd(options: {
+  sourceY: number;
+  maximumEnd: number;
+  safeBreaks: number[];
+  canvasHeight: number;
+}): number {
+  const { sourceY, maximumEnd, safeBreaks, canvasHeight } = options;
+
+  if (maximumEnd >= canvasHeight) {
+    return canvasHeight;
+  }
+
+  const minimumUsefulEnd = sourceY + (maximumEnd - sourceY) * 0.58;
+
+  const candidates = safeBreaks.filter(
+    (value) => value > minimumUsefulEnd && value <= maximumEnd
+  );
+
+  if (candidates.length > 0) {
+    return candidates[candidates.length - 1];
+  }
+
+  return maximumEnd;
 }
 
 export async function generateReportPdf(
@@ -152,6 +411,7 @@ export async function generateReportPdf(
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
+
   Object.assign(iframe.style, {
     position: "fixed",
     left: "-100000px",
@@ -159,58 +419,79 @@ export async function generateReportPdf(
     width: "1123px",
     height: "794px",
     border: "0",
-    visibility: "hidden",
+    opacity: "0",
     pointerEvents: "none",
     background: "#ffffff",
   });
+
   document.body.appendChild(iframe);
 
   try {
-    const doc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (!doc) throw new Error(`Unable to prepare "${reportTitle}" for PDF generation.`);
+    const documentInFrame =
+      iframe.contentDocument || iframe.contentWindow?.document;
 
-    doc.open();
-    doc.write(reportHtml);
-    doc.close();
+    if (!documentInFrame) {
+      throw new Error(`Unable to prepare "${reportTitle}" for PDF generation.`);
+    }
+
+    documentInFrame.open();
+    documentInFrame.write(reportHtml);
+    documentInFrame.close();
 
     await new Promise<void>((resolve) => {
-      if (doc.readyState === "complete" || doc.readyState === "interactive") {
-        window.setTimeout(resolve, 400);
-      } else {
-        iframe.addEventListener("load", () => resolve(), { once: true });
-        window.setTimeout(resolve, 2000);
+      if (
+        documentInFrame.readyState === "complete" ||
+        documentInFrame.readyState === "interactive"
+      ) {
+        window.setTimeout(resolve, 350);
+        return;
       }
+
+      iframe.addEventListener("load", () => resolve(), { once: true });
+      window.setTimeout(resolve, 2000);
     });
-    await waitForImages(doc);
 
-    const orientation = chooseOrientation(doc);
-    injectPdfStyles(doc, orientation);
-    iframe.style.width = orientation === "landscape" ? "1123px" : "794px";
+    await waitForImages(documentInFrame);
 
-    await new Promise<void>((resolve) =>
-      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()))
-    );
+    const orientation = chooseOrientation(documentInFrame);
+    const targetWidth = orientation === "landscape" ? 1123 : 794;
+
+    iframe.style.width = `${targetWidth}px`;
+    injectPdfStyles(documentInFrame, orientation, targetWidth);
+    await waitForLayout();
 
     const root =
-      doc.querySelector<HTMLElement>(".report-document") || doc.body;
-    if (!root) throw new Error(`Unable to find printable content for "${reportTitle}".`);
+      documentInFrame.querySelector<HTMLElement>(".report-document") ||
+      documentInFrame.body;
 
-    const contentWidth = Math.max(root.scrollWidth, orientation === "landscape" ? 1123 : 794);
-    const contentHeight = Math.max(root.scrollHeight, 1);
-    iframe.style.width = `${contentWidth}px`;
+    if (!root) {
+      throw new Error(`Unable to find printable content for "${reportTitle}".`);
+    }
+
+    root.style.width = `${targetWidth}px`;
+    root.style.minWidth = `${targetWidth}px`;
+    root.style.maxWidth = `${targetWidth}px`;
+    root.style.overflow = "visible";
+
+    await waitForLayout();
+
+    const contentHeight = Math.max(root.scrollHeight, root.offsetHeight, 1);
     iframe.style.height = `${contentHeight}px`;
 
     const canvas = await html2canvas(root, {
       backgroundColor: "#ffffff",
-      scale: 1.5,
+      scale: 1.7,
       useCORS: true,
       allowTaint: false,
       logging: false,
-      windowWidth: contentWidth,
+      width: targetWidth,
+      height: contentHeight,
+      windowWidth: targetWidth,
       windowHeight: contentHeight,
       scrollX: 0,
       scrollY: 0,
     });
+
     if (!canvas.width || !canvas.height) {
       throw new Error(`The generated PDF for "${reportTitle}" is empty.`);
     }
@@ -218,79 +499,125 @@ export async function generateReportPdf(
     const rootRect = root.getBoundingClientRect();
     const scaleX = canvas.width / Math.max(rootRect.width, 1);
     const scaleY = canvas.height / Math.max(rootRect.height, 1);
-    const safeBreaks = getSafeBreaks(root, scaleY);
-    const repeatedHeader = findDominantHeader(root, scaleX, scaleY);
 
-    const pdf = new jsPDF({ orientation, unit: "mm", format: "a4", compress: true });
+    const safeBreaks = getSafeBreaks(root, scaleY);
+    const reportHeader = getReportHeader(root, scaleX, scaleY);
+    const tableRegions = getTableRegions(root, scaleX, scaleY);
+
+    const pdf = new jsPDF({
+      orientation,
+      unit: "mm",
+      format: "a4",
+      compress: true,
+    });
+
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 8;
+    const margin = 7;
     const usableWidth = pageWidth - margin * 2;
     const usableHeight = pageHeight - margin * 2;
-    const pxPerMm = canvas.width / usableWidth;
-    const fullPagePx = usableHeight * pxPerMm;
-    const headerPx = repeatedHeader ? repeatedHeader.height : 0;
+    const pixelsPerMillimeter = canvas.width / usableWidth;
+    const fullPageHeightPx = Math.floor(usableHeight * pixelsPerMillimeter);
 
     let sourceY = 0;
     let pageIndex = 0;
-    while (sourceY < canvas.height - 1) {
-      const availablePx = fullPagePx - (pageIndex > 0 ? headerPx : 0);
-      const targetEnd = Math.min(canvas.height, sourceY + availablePx);
-      const lowerBound = sourceY + availablePx * 0.62;
-      const safeCandidates = safeBreaks.filter(
-        (value) => value > lowerBound && value <= targetEnd
-      );
-      let endY = safeCandidates.length
-        ? safeCandidates[safeCandidates.length - 1]
-        : targetEnd;
-      if (endY <= sourceY + 10) endY = targetEnd;
 
-      const sliceHeight = Math.max(1, Math.ceil(endY - sourceY));
+    while (sourceY < canvas.height - 1) {
+      const repeatedRegions: CanvasRegion[] = [];
+
+      if (pageIndex > 0 && reportHeader) {
+        repeatedRegions.push(reportHeader);
+      }
+
+      const activeTableHeader =
+        pageIndex > 0 ? findActiveTableHeader(tableRegions, sourceY) : null;
+
+      if (
+        activeTableHeader &&
+        !repeatedRegions.some(
+          (region) =>
+            region.y === activeTableHeader.y &&
+            region.height === activeTableHeader.height
+        )
+      ) {
+        repeatedRegions.push(activeTableHeader);
+      }
+
+      const repeatedHeight = repeatedRegions.reduce(
+        (sum, region) => sum + region.height,
+        0
+      );
+
+      const availableContentHeight = Math.max(
+        1,
+        fullPageHeightPx - repeatedHeight
+      );
+
+      const maximumEnd = Math.min(
+        canvas.height,
+        sourceY + availableContentHeight
+      );
+
+      let endY = findPageEnd({
+        sourceY,
+        maximumEnd,
+        safeBreaks,
+        canvasHeight: canvas.height,
+      });
+
+      if (endY <= sourceY + 5) {
+        endY = maximumEnd;
+      }
+
+      const contentSliceHeight = Math.max(1, Math.ceil(endY - sourceY));
+
+      // Every generated page uses the same fixed canvas height. This prevents
+      // the final page from being enlarged compared with earlier pages.
       const pageCanvas = document.createElement("canvas");
       pageCanvas.width = canvas.width;
-      pageCanvas.height = Math.ceil(sliceHeight + (pageIndex > 0 ? headerPx : 0));
+      pageCanvas.height = fullPageHeightPx;
+
       const context = pageCanvas.getContext("2d");
-      if (!context) throw new Error(`Unable to create a PDF page for "${reportTitle}".`);
+
+      if (!context) {
+        throw new Error(`Unable to create a PDF page for "${reportTitle}".`);
+      }
+
       context.fillStyle = "#ffffff";
       context.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
 
       let destinationY = 0;
-      if (pageIndex > 0 && repeatedHeader) {
-        context.drawImage(
-          canvas,
-          repeatedHeader.x,
-          repeatedHeader.y,
-          repeatedHeader.width,
-          repeatedHeader.height,
-          repeatedHeader.x,
-          0,
-          repeatedHeader.width,
-          repeatedHeader.height
-        );
-        destinationY = headerPx;
-      }
+
+      repeatedRegions.forEach((region) => {
+        drawCanvasRegion(context, canvas, region, destinationY);
+        destinationY += region.height;
+      });
+
       context.drawImage(
         canvas,
         0,
         sourceY,
         canvas.width,
-        sliceHeight,
+        contentSliceHeight,
         0,
         destinationY,
         canvas.width,
-        sliceHeight
+        contentSliceHeight
       );
 
-      if (pageIndex > 0) pdf.addPage("a4", orientation);
-      const imageData = pageCanvas.toDataURL("image/jpeg", 0.94);
-      const renderedHeight = usableWidth * (pageCanvas.height / pageCanvas.width);
+      if (pageIndex > 0) {
+        pdf.addPage("a4", orientation);
+      }
+
+      const imageData = pageCanvas.toDataURL("image/jpeg", 0.95);
+
       pdf.addImage(
         imageData,
         "JPEG",
         margin,
         margin,
         usableWidth,
-        Math.min(renderedHeight, usableHeight),
+        usableHeight,
         undefined,
         "FAST"
       );
@@ -300,6 +627,7 @@ export async function generateReportPdf(
     }
 
     const blob = pdf.output("blob");
+
     return {
       filename: `${sanitizeFilename(reportTitle)}.pdf`,
       pdfBase64: await blobToBase64(blob),
