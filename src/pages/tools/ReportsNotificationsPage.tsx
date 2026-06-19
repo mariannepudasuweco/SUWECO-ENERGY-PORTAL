@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 import {
   FileText,
   RefreshCw,
@@ -10,15 +8,12 @@ import {
   Eye,
   Printer,
   Download,
-  CheckCircle,
   AlertCircle,
-  Mail,
-  X,
-  Plus,
   Globe2,
   Lock,
 } from "lucide-react";
 import { PageContainer } from "../../components/layout/PageContainer";
+import { ReportEmailPanel } from "../../components/reports/ReportEmailPanel";
 import { useAccess } from "../../lib/accessControl";
 
 type ReportScope = "page" | "module" | "merged" | string;
@@ -79,259 +74,6 @@ const getSupabase = () => {
   return typeof window !== "undefined" ? (window as any).supabase : null;
 };
 
-const isValidEmail = (email: string) => {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-};
-
-
-const sanitizePdfFilename = (value: string) => {
-  const cleaned = String(value || "generated-report")
-    .trim()
-    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
-    .replace(/\s+/g, " ")
-    .replace(/\.+$/g, "");
-
-  return cleaned || "generated-report";
-};
-
-const waitForImages = async (root: ParentNode): Promise<void> => {
-  const images = Array.from(root.querySelectorAll("img"));
-
-  if (images.length === 0) return;
-
-  await Promise.all(
-    images.map(
-      (image) =>
-        new Promise<void>((resolve) => {
-          if (image.complete) {
-            resolve();
-            return;
-          }
-
-          const finish = () => resolve();
-
-          image.addEventListener("load", finish, { once: true });
-          image.addEventListener("error", finish, { once: true });
-
-          window.setTimeout(finish, 5000);
-        })
-    )
-  );
-};
-
-const blobToBase64 = (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-
-    reader.onloadend = () => {
-      if (typeof reader.result !== "string") {
-        reject(new Error("Unable to convert the generated PDF."));
-        return;
-      }
-
-      const base64 = reader.result.split(",")[1];
-
-      if (!base64) {
-        reject(new Error("The generated PDF attachment is empty."));
-        return;
-      }
-
-      resolve(base64);
-    };
-
-    reader.onerror = () => {
-      reject(reader.error || new Error("Unable to read the generated PDF."));
-    };
-
-    reader.readAsDataURL(blob);
-  });
-};
-
-const convertReportHtmlToPdfBase64 = async (
-  reportHtml: string,
-  reportTitle: string
-): Promise<{
-  filename: string;
-  pdfBase64: string;
-}> => {
-  if (!reportHtml.trim()) {
-    throw new Error(`"${reportTitle}" does not contain report content.`);
-  }
-
-  const iframe = document.createElement("iframe");
-
-  iframe.setAttribute("aria-hidden", "true");
-
-  Object.assign(iframe.style, {
-    position: "fixed",
-    left: "-100000px",
-    top: "0",
-    width: "1123px",
-    height: "794px",
-    border: "0",
-    visibility: "hidden",
-    pointerEvents: "none",
-    background: "#ffffff",
-  });
-
-  document.body.appendChild(iframe);
-
-  try {
-    const iframeDocument =
-      iframe.contentDocument || iframe.contentWindow?.document;
-
-    if (!iframeDocument) {
-      throw new Error(`Unable to prepare "${reportTitle}" for PDF generation.`);
-    }
-
-    iframeDocument.open();
-    iframeDocument.write(reportHtml);
-    iframeDocument.close();
-
-    await new Promise<void>((resolve) => {
-      const finish = () => resolve();
-
-      if (
-        iframeDocument.readyState === "complete" ||
-        iframeDocument.readyState === "interactive"
-      ) {
-        window.setTimeout(finish, 500);
-        return;
-      }
-
-      iframe.addEventListener("load", finish, { once: true });
-      window.setTimeout(finish, 2000);
-    });
-
-    await waitForImages(iframeDocument);
-
-    const reportElement =
-      iframeDocument.querySelector<HTMLElement>(".report-document") ||
-      iframeDocument.body;
-
-    if (!reportElement) {
-      throw new Error(
-        `Unable to find printable content for "${reportTitle}".`
-      );
-    }
-
-    const contentWidth = Math.max(reportElement.scrollWidth, 1123);
-    const contentHeight = Math.max(reportElement.scrollHeight, 794);
-
-    iframe.style.width = `${contentWidth}px`;
-    iframe.style.height = `${contentHeight}px`;
-
-    await new Promise<void>((resolve) => {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => resolve());
-      });
-    });
-
-    const canvas = await html2canvas(reportElement, {
-      backgroundColor: "#ffffff",
-      scale: 1.5,
-      useCORS: true,
-      allowTaint: false,
-      logging: false,
-      windowWidth: contentWidth,
-      windowHeight: contentHeight,
-    });
-
-    if (!canvas.width || !canvas.height) {
-      throw new Error(`The generated PDF for "${reportTitle}" is empty.`);
-    }
-
-    const pdf = new jsPDF({
-      orientation: "landscape",
-      unit: "mm",
-      format: "a4",
-      compress: true,
-    });
-
-    const pageWidth = pdf.internal.pageSize.getWidth();
-    const pageHeight = pdf.internal.pageSize.getHeight();
-    const margin = 8;
-    const usableWidth = pageWidth - margin * 2;
-    const usableHeight = pageHeight - margin * 2;
-    const sourcePageHeightPixels =
-      canvas.width * (usableHeight / usableWidth);
-
-    let sourceY = 0;
-    let pageIndex = 0;
-
-    while (sourceY < canvas.height) {
-      const sliceHeight = Math.min(
-        sourcePageHeightPixels,
-        canvas.height - sourceY
-      );
-
-      const pageCanvas = document.createElement("canvas");
-      pageCanvas.width = canvas.width;
-      pageCanvas.height = Math.ceil(sliceHeight);
-
-      const pageContext = pageCanvas.getContext("2d");
-
-      if (!pageContext) {
-        throw new Error(
-          `Unable to create a PDF page for "${reportTitle}".`
-        );
-      }
-
-      pageContext.fillStyle = "#ffffff";
-      pageContext.fillRect(
-        0,
-        0,
-        pageCanvas.width,
-        pageCanvas.height
-      );
-
-      pageContext.drawImage(
-        canvas,
-        0,
-        sourceY,
-        canvas.width,
-        sliceHeight,
-        0,
-        0,
-        pageCanvas.width,
-        pageCanvas.height
-      );
-
-      const imageData = pageCanvas.toDataURL("image/jpeg", 0.92);
-      const renderedHeight =
-        usableWidth * (pageCanvas.height / pageCanvas.width);
-
-      if (pageIndex > 0) {
-        pdf.addPage("a4", "landscape");
-      }
-
-      pdf.addImage(
-        imageData,
-        "JPEG",
-        margin,
-        margin,
-        usableWidth,
-        Math.min(renderedHeight, usableHeight),
-        undefined,
-        "FAST"
-      );
-
-      sourceY += sliceHeight;
-      pageIndex += 1;
-    }
-
-    const pdfBlob = pdf.output("blob");
-    const pdfBase64 = await blobToBase64(pdfBlob);
-
-    return {
-      filename: `${sanitizePdfFilename(reportTitle)}.pdf`,
-      pdfBase64,
-    };
-  } finally {
-    iframe.remove();
-  }
-};
-
 export default function ReportsNotificationsPage() {
   const { user, canDeleteRow, canEditRow } = useAccess();
   const [reports, setReports] = useState<GeneratedReport[]>([]);
@@ -343,9 +85,6 @@ export default function ReportsNotificationsPage() {
   const [scopeFilter, setScopeFilter] = useState("All");
   const [statusMessage, setStatusMessage] = useState("");
 
-  const [recipientInput, setRecipientInput] = useState("");
-  const [recipients, setRecipients] = useState<string[]>([]);
-  const [isSending, setIsSending] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const [mergedReportName, setMergedReportName] = useState("");
 
@@ -484,29 +223,6 @@ export default function ReportsNotificationsPage() {
   const clearSelection = () => {
     setSelectedReportIds([]);
     setMergedReportName("");
-  };
-
-  const addRecipient = () => {
-    const email = recipientInput.trim();
-
-    if (!email) return;
-
-    if (!isValidEmail(email)) {
-      alert("Please enter a valid email address.");
-      return;
-    }
-
-    if (recipients.includes(email)) {
-      setRecipientInput("");
-      return;
-    }
-
-    setRecipients((prev) => [...prev, email]);
-    setRecipientInput("");
-  };
-
-  const removeRecipient = (email: string) => {
-    setRecipients((prev) => prev.filter((item) => item !== email));
   };
 
   const viewReport = (report: GeneratedReport) => {
@@ -848,137 +564,6 @@ const mergedTitle =
     alert("Merged report saved to Reports page as Private.");
   };
 
-  const sendSelectedReports = async () => {
-  if (selectedReports.length === 0) {
-    alert("Please select reports first.");
-    return;
-  }
-
-  if (recipients.length === 0) {
-    alert("Please add at least one recipient email.");
-    return;
-  }
-
-  const invalidRecipients = recipients.filter(
-    (recipient) => !isValidEmail(recipient)
-  );
-
-  if (invalidRecipients.length > 0) {
-    alert(
-      `Please correct these invalid email addresses:\n\n${invalidRecipients.join(
-        "\n"
-      )}`
-    );
-    return;
-  }
-
-  const reportsWithHtml = selectedReports.filter(
-    (report) =>
-      typeof report.report_html === "string" &&
-      report.report_html.trim().length > 0
-  );
-
-  if (reportsWithHtml.length === 0) {
-    alert("Selected reports do not have saved HTML content.");
-    return;
-  }
-
-  setIsSending(true);
-
-  try {
-    const preparedReports = [];
-
-    for (const report of reportsWithHtml) {
-      const reportTitle =
-        report.report_title || "Generated Report";
-
-      const generatedPdf =
-        await convertReportHtmlToPdfBase64(
-          report.report_html || "",
-          reportTitle
-        );
-
-      preparedReports.push({
-        id: report.id,
-        title: reportTitle,
-        projectName: report.project_name,
-        moduleName: report.module_name,
-        pageName: report.page_name,
-        scope: report.report_scope,
-        generatedAt: report.generated_at,
-
-        // These two fields are required by the email API.
-        filename: generatedPdf.filename,
-        pdfBase64: generatedPdf.pdfBase64,
-      });
-    }
-
-    console.log(
-      "[Reports] Prepared PDF attachments:",
-      preparedReports.map((report) => ({
-        filename: report.filename,
-        base64Length: report.pdfBase64?.length || 0,
-      }))
-    );
-
-    const response = await fetch(
-      "/api/send-generated-reports",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          recipients,
-          reports: preparedReports,
-        }),
-      }
-    );
-
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      console.error("[Reports] Send email error:", result);
-
-      const apiError =
-        result?.error?.message ||
-        result?.error ||
-        "Unknown email error.";
-
-      throw new Error(
-        typeof apiError === "string"
-          ? apiError
-          : JSON.stringify(apiError)
-      );
-    }
-
-    console.log(
-      "[Reports] Email sent with attachments:",
-      result
-    );
-
-    alert(
-      `${result?.attachmentCount || preparedReports.length} PDF attachment${
-        preparedReports.length === 1 ? "" : "s"
-      } sent successfully.`
-    );
-  } catch (error) {
-    console.error(
-      "[Reports] Send email request failed:",
-      error
-    );
-
-    alert(
-      `Failed to send email.\n\n${
-        error instanceof Error
-          ? error.message
-          : String(error)
-      }`
-    );
-  } finally {
-    setIsSending(false);
-  }
-};
 
   return (
     <PageContainer
@@ -1106,82 +691,7 @@ const mergedTitle =
             </div>
 
             <div className="border-t border-gray-200 dark:border-[#38414a] pt-4">
-              <div className="flex flex-wrap gap-2 mb-3">
-                {recipients.map((email) => (
-                  <span
-                    key={email}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs font-semibold border border-blue-100 dark:border-blue-800"
-                  >
-                    <Mail size={13} />
-                    {email}
-                    <button
-                      type="button"
-                      onClick={() => removeRecipient(email)}
-                      className="text-blue-400 hover:text-red-500"
-                    >
-                      <X size={13} />
-                    </button>
-                  </span>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <input
-                  value={recipientInput}
-                  onChange={(e) => setRecipientInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addRecipient();
-                    }
-                  }}
-                  placeholder="Add recipient email..."
-                  className="h-10 min-w-[240px] px-3 bg-gray-50 dark:bg-[#22272b] border border-gray-300 dark:border-[#38414a] rounded-md text-sm outline-none focus:border-blue-500 text-gray-900 dark:text-white"
-                />
-
-                <button
-                  type="button"
-                  onClick={addRecipient}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-                >
-                  <Plus size={16} />
-                  Add Email
-                </button>
-
-                <input
-  value={mergedReportName}
-  onChange={(e) => setMergedReportName(e.target.value)}
-  placeholder="Merged report name..."
-  className="h-10 min-w-[240px] px-3 bg-gray-50 dark:bg-[#22272b] border border-gray-300 dark:border-[#38414a] rounded-md text-sm outline-none focus:border-blue-500 text-gray-900 dark:text-white"
-/>
-
-                <button
-                  onClick={mergeSelectedReports}
-                  disabled={isMerging}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  <Download size={16} />
-                  {isMerging ? "Merging..." : "Merge Selected"}
-                </button>
-
-                <button
-                  onClick={sendSelectedReports}
-                  disabled={isSending}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  <CheckCircle size={16} />
-                  {isSending ? "Sending..." : "Send Selected"}
-                </button>
-
-                {selectedReportIds.length > 0 && (
-                  <button
-                    onClick={clearSelection}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-md border border-gray-300 dark:border-gray-600 text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition"
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
+              <ReportEmailPanel selectedReports={selectedReports} userId={user?.id} />
             </div>
           </div>
 
@@ -1210,6 +720,39 @@ const mergedTitle =
                 Loading...
               </span>
             )}
+          </div>
+
+          <div className="px-5 py-3 border-b border-gray-200 dark:border-[#38414a] bg-gray-50/70 dark:bg-[#22272b]">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 dark:text-gray-300">
+                <span>{selectedReportIds.length} selected</span>
+                {selectedReportIds.length > 0 && (
+                  <button
+                    onClick={clearSelection}
+                    className="text-blue-600 hover:text-blue-700 dark:text-blue-400"
+                  >
+                    Clear selection
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  value={mergedReportName}
+                  onChange={(e) => setMergedReportName(e.target.value)}
+                  placeholder="Merged report name..."
+                  className="h-10 w-full sm:w-[260px] px-3 bg-white dark:bg-[#1d2125] border border-gray-300 dark:border-[#38414a] rounded-md text-sm outline-none focus:border-blue-500 text-gray-900 dark:text-white"
+                />
+                <button
+                  onClick={mergeSelectedReports}
+                  disabled={isMerging || selectedReportIds.length === 0}
+                  className="inline-flex h-10 items-center justify-center gap-2 px-4 rounded-md bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download size={16} />
+                  {isMerging ? "Merging..." : `Merge Selected (${selectedReportIds.length})`}
+                </button>
+              </div>
+            </div>
           </div>
 
           {groupedReports.length === 0 ? (
