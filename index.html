@@ -403,6 +403,7 @@
                                     <select id="manilaProcurementStatus">
                                         <option value="Pending">Pending</option>
                                         <option value="ONGOING">ONGOING</option>
+                                        <option value="Undelivered">Undelivered</option>
                                         <option value="Delivered">Delivered</option>
                                     </select>
                                 </div>
@@ -9022,7 +9023,8 @@ window.loadManilaProcurementFromSupabase = async function() {
         targetDate: row.target_date || '',
         dateDelivered: row.date_delivered || '',
         daysDelayed: Number(row.days_delayed || 0),
-        procurementStatus: row.procurement_status || 'Pending',
+        procurementStatus: row.procurement_status || row.status || 'Pending',
+        procurement_status: row.procurement_status || row.status || 'Pending',
         currentDepartment: row.current_department || '',
         remarks: row.remarks || '',
         totalCost: Number(row.total_cost || 0),
@@ -9109,7 +9111,8 @@ window.loadLocalProcurementFromSupabase = async function() {
         targetDate: row.target_date,
         dateDelivered: row.date_delivered,
         daysDelayed: Number(row.days_delayed || 0),
-        procurementStatus: row.status || 'Pending',
+        procurementStatus: row.status || row.procurement_status || 'Pending',
+        procurement_status: row.status || row.procurement_status || 'Pending',
         currentDepartment: row.current_department,
         totalCost: Number(row.total_cost || 0),
         vatType: row.vat_type || 'Non-VAT',
@@ -9941,6 +9944,7 @@ if (manilaForm && manilaForm.dataset.saveBound !== 'true') {
                             <option value="">All Status</option>
                             <option value="Pending">Pending</option>
                             <option value="Ongoing">Ongoing</option>
+                            <option value="Undelivered">Undelivered</option>
                             <option value="Delivered">Delivered</option>
                             <option value="Unpaid">Unpaid</option>
                             <option value="Paid">Paid</option>
@@ -10082,9 +10086,9 @@ records.sort((a, b) => {
 
     if (statusVal) {
         if (currentManilaTab === 'procurement') {
-            records = records.filter(m => m.procurementStatus === statusVal);
+            records = records.filter(m => String(m.procurementStatus || '').toLowerCase() === String(statusVal || '').toLowerCase());
         } else {
-            records = records.filter(m => m.paymentStatus === statusVal);
+            records = records.filter(m => String(m.paymentStatus || '').toLowerCase() === String(statusVal || '').toLowerCase());
         }
     }
 
@@ -10709,6 +10713,7 @@ if (
                             <option value="">All Status</option>
                             <option value="Pending">Pending</option>
                             <option value="Ongoing">Ongoing</option>
+                            <option value="Undelivered">Undelivered</option>
                             <option value="Delivered">Delivered</option>
                             <option value="Unpaid">Unpaid</option>
                             <option value="Paid">Paid</option>
@@ -11216,6 +11221,7 @@ if (
                 <th style="${thStyle}">BOQ CHARGING</th>
                 <th style="${thStyle}">SUBTASK</th>
                 <th style="${thStyle}">WORK ITEM NO.</th>
+                <th style="${thStyle}">STATUS</th>
                 <th style="${thStyle}">REMARKS</th>
                 <th style="${thStyle} text-align:center;">ACTION</th>
             </tr>
@@ -11256,7 +11262,7 @@ if (
     thead.innerHTML = headerByTab[currentLocalTab] || headerByTab.procurement;
 
     const columnCountByTab = {
-        procurement: 12,
+        procurement: 13,
         supplies: 11,
         budget: 12
     };
@@ -11299,9 +11305,11 @@ if (
             const paymentStatusType = normalize(paymentStatus) === 'paid' ? 'success' : 'warning';
             const procurementStatusType = ['delivered', 'completed'].includes(normalize(procurementStatus))
                 ? 'success'
-                : ['cancelled', 'delayed'].includes(normalize(procurementStatus))
+                : ['undelivered', 'cancelled', 'delayed'].includes(normalize(procurementStatus))
                     ? 'danger'
-                    : 'neutral';
+                    : ['ongoing', 'pending'].includes(normalize(procurementStatus))
+                        ? 'warning'
+                        : 'neutral';
 
             if (currentLocalTab === 'procurement') {
                 return `
@@ -11316,6 +11324,7 @@ if (
                         <td style="${cellStyle}">${escapeHtml(getBoqCharging(r) || '-')}</td>
                         <td style="${cellStyle}">${escapeHtml(getSubtaskCharging(r) || '-')}</td>
                         <td style="${cellStyle}">${escapeHtml(getWorkItemNo(r) || '-')}</td>
+                        <td style="${cellStyle}">${badgeHtml(procurementStatus, procurementStatusType)}</td>
                         <td style="${cellStyle} min-width: 220px;">${escapeHtml(getRemarks(r) || '-')}</td>
                         <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
                     </tr>
@@ -11372,6 +11381,7 @@ if (
                         <td style="${cellStyle}">${escapeHtml(getBoqCharging(r) || '-')}</td>
                         <td style="${cellStyle}">${escapeHtml(getSubtaskCharging(r) || '-')}</td>
                         <td style="${cellStyle}">${escapeHtml(getWorkItemNo(r) || '-')}</td>
+                        <td style="${cellStyle}">${badgeHtml(procurementStatus, procurementStatusType)}</td>
                         <td style="${cellStyle} min-width: 220px;">${escapeHtml(getRemarks(r) || '-')}</td>
                         <td style="${cellStyle}">${actionButtonsHtml(id)}</td>
                     </tr>

@@ -6149,9 +6149,9 @@ window.renderBoqChargingView = function() {
             
             if (statusVal) {
                 if (currentManilaTab === 'procurement') {
-                    records = records.filter(m => m.procurementStatus === statusVal);
+                    records = records.filter(m => String(m.procurementStatus || '').toLowerCase() === String(statusVal || '').toLowerCase());
                 } else {
-                    records = records.filter(m => m.paymentStatus === statusVal);
+                    records = records.filter(m => String(m.paymentStatus || '').toLowerCase() === String(statusVal || '').toLowerCase());
                 }
             }
 
@@ -6584,6 +6584,7 @@ window.renderBoqChargingView = function() {
                             <option value="" ${localSharedFilters.status === '' ? 'selected' : ''}>All Status</option>
                             <option value="Pending" ${localSharedFilters.status === 'Pending' ? 'selected' : ''}>Pending</option>
                             <option value="ONGOING" ${localSharedFilters.status === 'ONGOING' ? 'selected' : ''}>ONGOING</option>
+                            <option value="Undelivered" ${localSharedFilters.status === 'Undelivered' ? 'selected' : ''}>Undelivered</option>
                             <option value="Delivered" ${localSharedFilters.status === 'Delivered' ? 'selected' : ''}>Delivered</option>
                             <option value="Unpaid" ${localSharedFilters.status === 'Unpaid' ? 'selected' : ''}>Unpaid</option>
                             <option value="Paid" ${localSharedFilters.status === 'Paid' ? 'selected' : ''}>Paid</option>
@@ -6696,9 +6697,9 @@ window.renderBoqChargingView = function() {
             
             if (statusVal) {
                 if (currentLocalTab === 'procurement' || currentLocalTab === 'supplies') {
-                    records = records.filter(m => m.procurementStatus === statusVal);
+                    records = records.filter(m => String(m.procurementStatus || '').toLowerCase() === String(statusVal || '').toLowerCase());
                 } else {
-                    records = records.filter(m => m.paymentStatus === statusVal);
+                    records = records.filter(m => String(m.paymentStatus || '').toLowerCase() === String(statusVal || '').toLowerCase());
                 }
             }
 
