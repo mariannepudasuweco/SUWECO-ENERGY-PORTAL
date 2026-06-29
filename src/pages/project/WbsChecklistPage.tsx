@@ -16,6 +16,7 @@ import {
   mergeChecklistSourceRows,
   type ChecklistStatusCounts,
 } from "../../utils/wbsAlignment";
+import { PERSONNEL_LIST } from "../../data/personnelData";
 
 const initialItems = originalItems;
 
@@ -23,6 +24,8 @@ type DbChecklistItem = ChecklistItem & {
   original_item_id?: string;
   is_manual?: boolean;
   created_by?: string | null;
+  assigned_to?: string | null;
+  personnel?: string | null;
 };
 
 const PHASE_COLORS: Record<string, { bg: string; text: string }> = {
@@ -430,7 +433,7 @@ export default function WbsChecklistPage() {
     setExpandedNodes(nextExpanded);
   }, [fullReportMode, groupedData]);
 
-  const updateItem = async (id: string, patch: Partial<ChecklistItem>) => {
+  const updateItem = async (id: string, patch: Partial<DbChecklistItem>) => {
     const existingForAccess = items.find((item) => String(item.id) === String(id));
     if (!canEditRow("wbs-checklist", existingForAccess || {})) {
       alert("You are not allowed to edit this WBS item.");
@@ -468,6 +471,8 @@ export default function WbsChecklistPage() {
       task_code: existingItem.item_no || "",
       item: patch.item ?? existingItem.item,
       department: patch.department ?? existingItem.department ?? "",
+      assigned_to: patch.assigned_to ?? existingItem.assigned_to ?? "",
+      personnel: patch.personnel ?? existingItem.personnel ?? "",
       date_started: (patch.date_started ?? existingItem.date_started) || null,
       due_date: (patch.due_date ?? existingItem.due_date) || null,
       priority: patch.priority ?? existingItem.priority ?? "Normal",
@@ -1104,17 +1109,25 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                   <label className="block text-xs font-semibold text-slate-500 mb-1">
                     Department / Assignee
                   </label>
-                  <input
-                    type="text"
-                    value={editingItem.department}
+                  <select
+                    value={editingItem.assigned_to || editingItem.department || ""}
                     onChange={(e) =>
                       setEditingItem({
                         ...editingItem,
+                        assigned_to: e.target.value,
                         department: e.target.value,
+                        personnel: e.target.value,
                       })
                     }
-                    className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                  />
+                    className="w-full border border-slate-200 rounded-lg p-2.5 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 bg-white"
+                  >
+                    <option value="">Unassigned</option>
+                    {PERSONNEL_LIST.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
@@ -1204,6 +1217,8 @@ window.dispatchEvent(new CustomEvent("tasksUpdated"));
                   updateItem(editingItem.id, {
                     item: editingItem.item,
                     department: editingItem.department,
+                    assigned_to: editingItem.assigned_to,
+                    personnel: editingItem.personnel,
                     status: editingItem.status,
                     date_started: editingItem.date_started,
                     due_date: editingItem.due_date,

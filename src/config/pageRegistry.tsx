@@ -66,7 +66,8 @@ export const REACT_ONLY_PAGES: AppPage[] = [
   'wbs-checklist', 
   'ai-meeting-recorder', 
   'reports-notifications', 
-  'calendar'
+  'calendar',
+  'task-delegation'
 ];
 
 /**
